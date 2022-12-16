@@ -23,6 +23,16 @@ txt_array = np.int64(np.loadtxt(file_name))
 
 t_loaded = perf_counter()
 
+list_a = []
+
+for i in range (txt_array.shape[0]) :
+    if (txt_array[i][0] == txt_array[i][1]) :
+        list_a.append(i)
+
+## print(list_a)
+## delete edges whose source vertex id equals to dest vertex id.
+txt_array = np.delete(txt_array, list_a, axis = 0)
+
 vertex_max = np.int64(txt_array.max())
 
 vertex_min = np.int64(txt_array.min())
