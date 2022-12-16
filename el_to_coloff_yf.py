@@ -55,7 +55,7 @@ f_column = open(file_name + "_column.txt", "wt")
 
 
 
-f_offset.write(str(vertex_max - vertex_min + 1) + '\n')
+f_offset.write(str(vertex_max + 1) + '\n')
 
 f_offset.write(str(np.int64(0)) + '\n')
 
@@ -63,7 +63,7 @@ f_column.write(str(edge_num) + '\n')
 
 
 
-a_offset = np.zeros(vertex_max - vertex_min + 1)
+a_offset = np.zeros(vertex_max + 1)
 
 for i in range(0, edge_num):
 
@@ -75,7 +75,7 @@ for i in range(0, edge_num):
 
 temp = 0
 
-for i in range(0, vertex_max - vertex_min + 1):
+for i in range(0, vertex_max + 1):
 
     temp = temp + a_offset[i]
 
