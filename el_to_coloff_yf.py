@@ -19,19 +19,41 @@ file_name = sys.argv[1]
 
 txt_array = np.int64(np.loadtxt(file_name))
 
-#print(txt_array)
+
+## if source_id > dest_id, exchange them; only suitable for undirected graph.
+for i in range (txt_array.shape[0]) :
+    if (txt_array[i][0] >= txt_array[i][1]) :
+        temp = txt_array[i][1]
+        txt_array[i][1] = txt_array[i][0]
+        txt_array[i][0] = temp
+
+txt_array = txt_array[np.lexsort([txt_array.T[1]])] ## sort array by incremental order
+txt_array = txt_array[np.lexsort([txt_array.T[0]])] ## sort array by incremental order
+print(txt_array)
 
 t_loaded = perf_counter()
 
-list_a = []
+list_a = [] ## delete self-edges
 
 for i in range (txt_array.shape[0]) :
     if (txt_array[i][0] == txt_array[i][1]) :
         list_a.append(i)
 
 ## print(list_a)
-## delete edges whose source vertex id equals to dest vertex id.
+## print(txt_array)
 txt_array = np.delete(txt_array, list_a, axis = 0)
+
+list_b = []  ## delete duplicated edges 
+
+for i in range (1, txt_array.shape[0]) :
+    if ((txt_array[i][0] == txt_array[i-1][0]) & (txt_array[i][1] == txt_array[i-1][1])) :
+        list_b.append(i)
+
+## print(list_a)
+txt_array = np.delete(txt_array, list_b, axis = 0)
+
+## print(list_b)
+print(txt_array)
 
 vertex_max = np.int64(txt_array.max())
 
