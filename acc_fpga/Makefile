@@ -107,6 +107,10 @@ endif
 CXXFLAGS += $(EXTRA_CXXFLAGS)
 VPP_FLAGS += $(EXTRA_VPP_FLAGS)
 
+ifneq ($(TARGET), hw)
+	VPP_FLAGS += -g
+endif
+
 ########################## Setting up Host Variables ##########################
 ifeq ($(TARGET),sw_emu)
 CXXFLAGS += -D SW_EMU_TEST
