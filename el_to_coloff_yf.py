@@ -17,8 +17,9 @@ if n < 2:
 
 file_name = sys.argv[1]
 
-txt_array = np.int64(np.loadtxt(file_name))
+txt_array_t = np.int64(np.loadtxt(file_name))
 
+txt_array = txt_array_t[:,:2]
 
 ## if source_id > dest_id, exchange them; only suitable for undirected graph.
 for i in range (txt_array.shape[0]) :
@@ -29,7 +30,7 @@ for i in range (txt_array.shape[0]) :
 
 txt_array = txt_array[np.lexsort([txt_array.T[1]])] ## sort array by incremental order
 txt_array = txt_array[np.lexsort([txt_array.T[0]])] ## sort array by incremental order
-print(txt_array)
+## print(txt_array)
 
 t_loaded = perf_counter()
 
@@ -53,7 +54,7 @@ for i in range (1, txt_array.shape[0]) :
 txt_array = np.delete(txt_array, list_b, axis = 0)
 
 ## print(list_b)
-print(txt_array)
+## print(txt_array)
 
 vertex_max = np.int64(txt_array.max())
 
