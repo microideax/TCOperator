@@ -100,7 +100,7 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 8 ## can be set a variable, equals to thread numbers.
+partition_num = 16 ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):
@@ -116,8 +116,10 @@ print("partition index array ", partition_index)
 ## multi process pool.
 process_pool = Pool(partition_num)
 result_pool = []
+global _shared_array
+_shared_array = txt_array
 for i in range(partition_num):
-    result_pool.append(process_pool.apply_async(func=partion_multi_process, args=(i, txt_array, partition_index, adj_matrix_dim)))
+    result_pool.append(process_pool.apply_async(func=partion_multi_process, args=(i, _shared_array, partition_index, adj_matrix_dim)))
 
 process_pool.close()
 process_pool.join()
