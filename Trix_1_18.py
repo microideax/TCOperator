@@ -53,8 +53,10 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
 
 
 ## filename = './datasets/as-skitter.txt'
-filename = './datasets/amazon0601.mtx' ## seem our method performs better in amamzon dataset
+## filename = './datasets/amazon0601.mtx' ## seem our method performs better in amamzon dataset
 ## filename = './datasets/roadNet-CA.txt'
+## filename = './datasets/ca-cit-HepPh.edges'
+filename = './datasets/cit-Patents.txt'
 
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
@@ -92,6 +94,9 @@ dest_array = np.add.accumulate(dest_array)
 ## print (dest_array.shape[0])
 print (dest_array)
 
+global _shared_array
+_shared_array = txt_array
+
 print("Load data done ")
 ## ======= load data done =======
 
@@ -100,13 +105,13 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 16 ## can be set a variable, equals to thread numbers.
+partition_num = 8 ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):
     index_t = np.int32(len(txt_array)*(i+1)/partition_num)
     abs_array = np.absolute(dest_array - index_t)
-    partition_index[i+1] = abs_array.argmin()
+    partition_index[i+1] = abs_array.argmin() + 1
     ## partition_index[i+1] = np.int32((adj_matrix_dim)*(i+1)/partition_num)
     ## partition_index[i+1] = np.int32(adj_matrix_dim*(math.pow(0.717, partition_num-1-i)))
 partition_index[partition_num] = adj_matrix_dim
@@ -116,8 +121,6 @@ print("partition index array ", partition_index)
 ## multi process pool.
 process_pool = Pool(partition_num)
 result_pool = []
-global _shared_array
-_shared_array = txt_array
 for i in range(partition_num):
     result_pool.append(process_pool.apply_async(func=partion_multi_process, args=(i, _shared_array, partition_index, adj_matrix_dim)))
 
@@ -136,7 +139,7 @@ for i in range(partition_num):
 intersection_pool = Pool(partition_num)
 final_result_pool = []
 for i in range(partition_num):
-    final_result_pool.append(intersection_pool.apply_async(func=intersection_multi_process, args=(i, txt_array, graph_csr_row[i], graph_csr_col[i])))
+    final_result_pool.append(intersection_pool.apply_async(func=intersection_multi_process, args=(i, _shared_array, graph_csr_row[i], graph_csr_col[i])))
 
 intersection_pool.close()
 intersection_pool.join()
