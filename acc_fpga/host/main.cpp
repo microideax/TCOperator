@@ -46,6 +46,9 @@
 #define XCL_BANK15 XCL_BANK(15)
 
 #define P2_32 4294967296
+
+// #define HLS_TEST 1
+
 class ArgParser {
    public:
     ArgParser(int& argc, const char** argv) {
@@ -153,6 +156,7 @@ int main(int argc, const char* argv[]) {
         }
         index++;
     }
+
 #ifndef HLS_TEST
     // do pre-process on CPU
     struct timeval start_time, end_time, test_time;

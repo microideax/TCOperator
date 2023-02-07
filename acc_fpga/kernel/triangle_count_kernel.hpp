@@ -41,7 +41,8 @@
 typedef ap_uint<32> DT;
 typedef ap_uint<512> uint512;
 
-extern "C" void TC_kernel(int vertexNum,
+// extern "C" 
+void TC_kernel(int vertexNum,
                           int edgeNum,
                           uint512 offsetsG1[V],
                           uint512 rowsG1[E],
