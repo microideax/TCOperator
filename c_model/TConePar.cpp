@@ -53,6 +53,38 @@ unsigned int SetIntersection(DT *list_a, DT *list_b, int len_a, int len_b)
 
 
 template <typename DT>
+int binarySearch(DT arr[], int low, int high, DT key){
+    int mid = 0;
+    while (low <= high){
+        mid = low + (high - low)/2;
+        if(arr[mid] == key){
+            return mid;
+        } else if (arr[mid] < key){
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
+}
+
+template <typename DT>
+unsigned int setInterBinarySearch(DT *list_a, DT *list_b, int len_a, int len_b){
+/** Need to always make sure the list_a is the shorter one **/
+    unsigned int count = 0;
+    int temp_idx = 0;
+    // list_a has to be the shorter one, search with element from shorter array
+    for (int i = 0; i < len_a; i++){
+        temp_idx = binarySearch(list_b, 0, len_b-1, list_a[i]);
+        if (temp_idx != -1) {
+            count++;
+        }
+    }
+    return count;
+}
+
+
+template <typename DT>
 unsigned int TriangleCount(unsigned int edge_num, DT* edge_list, DT* offset, DT* col){
 
 unsigned int triangle_count = 0;
@@ -78,7 +110,17 @@ DT list_b[BUF_DEPTH];
 
         // Process setintersection on lists with the len
         unsigned int temp_count = 0;
+        /** Using normal set intersection function
         temp_count = SetIntersection<DT>(list_a, list_b, len_a, len_b);
+        **/
+
+        /** Using binary search based set intersection function **/
+        if (len_a <= len_b){
+            temp_count = setInterBinarySearch<DT>(list_a, list_b, len_a, len_b);
+        } else {
+            temp_count = setInterBinarySearch<DT>(list_b, list_a, len_b, len_a);
+        }
+
         triangle_count += temp_count;
         }
     }
