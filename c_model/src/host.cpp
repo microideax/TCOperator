@@ -3,6 +3,7 @@
 #include <sstream>
 #include <cstring>
 #include <vector>
+#include <chrono>
 #include "cmdlineparser.h"
 
 // XRT includes
@@ -10,8 +11,7 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_kernel.h"
 
-#define PARTITION_NUM 2
-
+#define PARTITION_NUM 8
 
 void getTxtSize (std::string file_name, int& lineNum) {
     std::cout << "Getting file size ... " << file_name << std::endl;
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
 
     std::cout << "load graph dataset" << std::endl;
 
-    std::string datasetName = "test";
+    std::string datasetName = "facebook_combined";
     std::cout << " Read edge file ... " << std::endl;
 
     std::fstream edge_file;
@@ -150,14 +150,23 @@ int main(int argc, char** argv) {
     int TcNum = 0;
     auto resultBuffer = xrt::bo(device, sizeof(int), krnl.group_id(0));
     auto result = resultBuffer.map<int*>();
+
+    // auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
         resultBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        auto start = std::chrono::steady_clock::now();
         auto run = krnl(edgeBuffer, offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum, resultBuffer);
         run.wait();
+        auto end = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed_seconds = end-start;
+        std::cout << elapsed_seconds.count() << std::endl;
         resultBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
         TcNum += result[0];
     }
+    // auto end = std::chrono::steady_clock::now();
+    // std::chrono::duration<double> elapsed_seconds = end-start;
 
+    // std::cout << "TC number = " << TcNum << " Time elapse " << elapsed_seconds.count() << std::endl;
     std::cout << "TC number = " << TcNum << std::endl;
     return 0;
 }

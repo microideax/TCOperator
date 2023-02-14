@@ -57,9 +57,9 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
 
 ## dataset_name = 'as-skitter' ## .txt
 ## dataset_name = 'ca-cit-HepPh' ## .edges
-## dataset_name = 'facebook_combined' ## .txt
-dataset_name = 'amazon0601' ## .mtx
-filename = '../datasets/' + dataset_name + '.mtx'
+dataset_name = 'facebook_combined' ## .txt
+## dataset_name = 'amazon0601' ## .mtx
+filename = '../datasets/' + dataset_name + '.txt'
 
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
