@@ -108,7 +108,7 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 8 ## can be set a variable, equals to thread numbers.
+partition_num = 1 ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):
