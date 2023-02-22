@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <hls_stream.h>
+#include <iostream>
 
 
 #define u512_t      ap_uint<512> 
@@ -19,6 +20,8 @@ template <typename DT>
 void adjListCpy(DT* dst, DT* start_location, unsigned int len){
     // cout<<"copy list: ";
     for (unsigned int i=0; i<len; i++){
+//        for(unsigned int j = 0; j < 8; j++)
+//#pragma HLS pipeline ii = 1
         *(dst+i) = *(start_location + i);
         // cout<<*(dst+i) << " ";
     }
@@ -32,6 +35,70 @@ void burstCpyArray(DT* inPort, DT* dstArr, int offset, int length) {
 // can not add ii = 1
         dstArr[i] = inPort[i + offset];
     }
+}
+
+template <typename DT>
+int binarySearch(DT arr[], int low, int high, DT key){
+    int mid = 0;
+    bsearch: while (low <= high){
+        mid = low + ((high -low)>>1);
+        if(arr[mid] == key){
+            return mid;
+        } else if (arr[mid] < key){
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
+}
+
+template <typename DT>
+int approxBinarySearch(DT arr[], int low, int high, DT key){
+    int idx_array = {};
+    int mid = 0;
+    bsearch: while (low <= high){
+        mid = low + ((high -low)>>1);
+        if(arr[mid] == key){
+            return mid;
+        } else if (arr[mid] < key){
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return -1;
+}
+
+template <typename DT>
+void setInterBinarySearch(DT *list_a, DT *list_b, int len_a, int len_b, int* tc_cnt){
+/** Need to make sure the list_a is the shorter one **/
+    unsigned int count = 0;
+    int temp_idx_0 = 0;
+    // list_a has to be the shorter one, search with element from shorter array
+    setint: for (int i = 0; i < len_a; i++){
+        temp_idx_0 = binarySearch<DT>(list_b, 0, len_b-1, list_a[i]);
+        if (temp_idx_0 != -1) {
+            count++;
+        }
+    }
+    tc_cnt[0] = count;
+}
+
+template <typename DT>
+void setInterBinarySearchMT(DT *list_a, DT *list_b, int len_a, int len_b, int* tc_cnt){
+/** Need to make sure the list_a is the shorter one **/
+    unsigned int count = 0;
+    int temp_idx_0 = 0;
+    // list_a has to be the shorter one, search with element from shorter array
+    setintmt: for (int i = 0; i < len_a; i++){
+#pragma HLS unroll factor = 4
+        temp_idx_0 = binarySearch<DT>(list_b, 0, len_b-1, list_a[i]);
+        if (temp_idx_0 != -1) {
+            count++;
+        }
+    }
+    tc_cnt[0] = count;
 }
 
 void setIntersection(int *list_a, int *list_b, int len_a, int len_b, int offset_1, int offset_2,  int* tc_cnt)
@@ -128,32 +195,43 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
 // #pragma HLS RESOURCE variable=list_b core=XPM_MEMORY uram
 
     int triangle_count = 0;
-
+    int previous_node_a = -1;
 // use memcpy to copy the list_a and list_b from memory
     for (int i = 0; i < edge_num; i+=1) {
+#pragma HLS DATAFLOW
         int node_a = edge_list[i*2];
         int node_b = edge_list[i*2 + 1];
-        // cout<< "read nodes: "<< node_a <<", "<<node_b << endl;
+        // std::cout<< "read nodes: "<< node_a <<", "<<node_b << std::endl;
         int vertex_a_idx = offset_list_1[node_a];
         int vertex_b_idx = offset_list_2[node_b];
         int len_a = offset_list_1[node_a + 1] - vertex_a_idx;
         int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
-        // cout<< "lens of lists: "<< len_a <<", "<< len_b << endl;
+        // std::cout<< "lens of lists: "<< len_a <<", "<< len_b << std::endl;
         
         if ((len_a != 0) && (len_b != 0)) {
             // burstCpyArray<int>(column_list_1, list_a, len_a, vertex_a_idx);
             // burstCpyArray<int>(column_list_2, list_b, len_b, vertex_b_idx);
-            adjListCpy(list_a, &column_list_1[vertex_a_idx], len_a);
-            adjListCpy(list_b, &column_list_2[vertex_b_idx], len_b);
+            if (previous_node_a != node_a){
+                adjListCpy<int>(list_a, &column_list_1[vertex_a_idx], len_a);   
+                previous_node_a = node_a; 
+            }
+            adjListCpy<int>(list_b, &column_list_2[vertex_b_idx], len_b);
 
-        // Process setintersection on lists with the len
+            // Process setintersection on lists with the len
             int temp_count[1] = {0};
             // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
             setIntersection(list_a, list_b, len_a, len_b, temp_count);
+            /*
+            if (len_a <= len_b){
+                setInterBinarySearchMT<int>(list_a, list_b, len_a, len_b, temp_count);
+            } else {
+                setInterBinarySearchMT<int>(list_b, list_a, len_b, len_a, temp_count);
+            }
+            */
             triangle_count += temp_count[0];
         }
+        // previous_node_a = node_a;
     }
     tc_number[0] = triangle_count;
 }
-
 }
