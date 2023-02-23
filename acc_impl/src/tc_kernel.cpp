@@ -57,7 +57,7 @@ int highestPowerof2(int n){
     int res = 0;
     if(n == 1){
         res = 1;
-    } else {
+    } else if (n >= 2) {
         res = 1;
         while (res*2 <= n) {
             res = res * 2;
