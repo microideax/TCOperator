@@ -53,21 +53,43 @@ int binarySearch(DT arr[], int low, int high, DT key){
     return -1;
 }
 
-template <typename DT>
-int approxBinarySearch(DT arr[], int low, int high, DT key){
-    int idx_array = {};
-    int mid = 0;
-    bsearch: while (low <= high){
-        mid = low + ((high -low)>>1);
-        if(arr[mid] == key){
-            return mid;
-        } else if (arr[mid] < key){
-            low = mid + 1;
-        } else {
-            high = mid - 1;
+int highestPowerof2(int n){
+    int res = 0;
+    if(n == 1){
+        res = 1;
+    } else {
+        res = 1;
+        while (res*2 <= n) {
+            res = res * 2;
         }
     }
-    return -1;
+    return res * 2;
+}
+
+template <typename DT>
+int lbitBinarySearch(DT arr[], int low, int high, DT key){
+    int k = highestPowerof2(high)/2;
+    // int k = (high+1)/2 + 1;
+    // int k = (high+1)>>1;
+    // if (high >= 16) {
+    //     k = 16;
+    // } else {
+    //     k = high;
+    // }
+    int r;
+    int i = (arr[k] <= key) ? k : 0;
+    while ((k >>= 1)){
+#pragma HLS pipeline ii=1
+        r = i + k;
+        if ((r <= high) && (key >= arr[r])) {
+            i = r;
+        }
+    }
+    if (arr[i] == key) {
+        return i;
+    } else {
+        return -1;
+    }
 }
 
 template <typename DT>
@@ -77,7 +99,8 @@ void setInterBinarySearch(DT *list_a, DT *list_b, int len_a, int len_b, int* tc_
     int temp_idx_0 = 0;
     // list_a has to be the shorter one, search with element from shorter array
     setint: for (int i = 0; i < len_a; i++){
-        temp_idx_0 = binarySearch<DT>(list_b, 0, len_b-1, list_a[i]);
+        temp_idx_0 = lbitBinarySearch<DT>(list_b, 0, len_b-1, list_a[i]);
+        // temp_idx_0 = binarySearch<DT>(list_b, 0, len_b-1, list_a[i]);
         if (temp_idx_0 != -1) {
             count++;
         }
@@ -198,7 +221,7 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
     int previous_node_a = -1;
 // use memcpy to copy the list_a and list_b from memory
     for (int i = 0; i < edge_num; i+=1) {
-#pragma HLS DATAFLOW
+//#pragma HLS DATAFLOW
         int node_a = edge_list[i*2];
         int node_b = edge_list[i*2 + 1];
         // std::cout<< "read nodes: "<< node_a <<", "<<node_b << std::endl;
@@ -217,17 +240,17 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
             }
             adjListCpy<int>(list_b, &column_list_2[vertex_b_idx], len_b);
 
-            // Process setintersection on lists with the len
+            // Process setintersection on lists with the lens are not zeros
             int temp_count[1] = {0};
             // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
-            setIntersection(list_a, list_b, len_a, len_b, temp_count);
-            /*
+            // setIntersection(list_a, list_b, len_a, len_b, temp_count);
+            /**/
             if (len_a <= len_b){
-                setInterBinarySearchMT<int>(list_a, list_b, len_a, len_b, temp_count);
+                setInterBinarySearch<int>(list_a, list_b, len_a, len_b, temp_count);
             } else {
-                setInterBinarySearchMT<int>(list_b, list_a, len_b, len_a, temp_count);
+                setInterBinarySearch<int>(list_b, list_a, len_b, len_a, temp_count);
             }
-            */
+            /**/
             triangle_count += temp_count[0];
         }
         // previous_node_a = node_a;
