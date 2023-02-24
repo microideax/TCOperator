@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <hls_stream.h>
+#include <hls_math.h>
 #include <iostream>
 
 
@@ -53,29 +54,25 @@ int binarySearch(DT arr[], int low, int high, DT key){
     return -1;
 }
 
-int highestPowerof2(int n){
+int highestPowerof2(int n) {
     int res = 0;
-    if(n == 1){
+    if(n > 0) {
         res = 1;
-    } else if (n >= 2) {
-        res = 1;
-        while (res*2 <= n) {
-            res = res * 2;
+        while ((res<<1) <= n) {
+            res <<= 1;
         }
     }
-    return res * 2;
+    return res;
 }
 
 template <typename DT>
 int lbitBinarySearch(DT arr[], int low, int high, DT key){
-    int k = highestPowerof2(high)/2;
-    // int k = (high+1)/2 + 1;
-    // int k = (high+1)>>1;
-    // if (high >= 16) {
-    //     k = 16;
-    // } else {
-    //     k = high;
-    // }
+    // int k = highestPowerof2(high);
+    int k = 0;
+    if (high > 0) {
+        int pos = log2(high);
+        k = 1 << pos;
+    }
     int r;
     int i = (arr[k] <= key) ? k : 0;
     while ((k >>= 1)){
