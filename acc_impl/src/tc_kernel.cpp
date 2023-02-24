@@ -81,8 +81,10 @@ int lbitBinarySearch(DT arr[], int low, int high, DT key){
     while ((k >>= 1)){
 #pragma HLS pipeline ii=1
         r = i + k;
-        if ((r <= high) && (key >= arr[r])) {
+        if ((r <= high) && (key > arr[r])) {
             i = r;
+        } else if ((r <= high) && (key == arr[r])) {
+            return r;
         }
     }
     if (arr[i] == key) {
