@@ -67,12 +67,12 @@ int highestPowerof2(int n) {
 
 template <typename DT>
 int lbitBinarySearch(DT arr[], int low, int high, DT key){
-    // int k = highestPowerof2(high);
-    int k = 0;
-    if (high > 0) {
-        int pos = log2(high);
-        k = 1 << pos;
-    }
+    int k = highestPowerof2(high);
+    // int k = 0;
+    // if (high > 0) {
+    //     int pos = log2(high);
+    //     k = 1 << pos;
+    // }
     int r;
     int i = (arr[k] <= key) ? k : 0;
     while ((k >>= 1)){
