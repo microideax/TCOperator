@@ -73,14 +73,16 @@ int lbitBinarySearch(DT arr[], int low, int high, DT key){
     //     int pos = log2(high);
     //     k = 1 << pos;
     // }
+    int temp_value = arr[k];
     int r;
-    int i = (arr[k] <= key) ? k : 0;
+    int i = (temp_value <= key) ? k : 0;
     while ((k >>= 1)){
 #pragma HLS pipeline ii=1
         r = i + k;
-        if ((r <= high) && (key > arr[r])) {
+        temp_value = arr[r];
+        if ((r <= high) && (key > temp_value)) {
             i = r;
-        } else if ((r <= high) && (key == arr[r])) {
+        } else if ((r <= high) && (key == temp_value)) {
             return r;
         }
     }
