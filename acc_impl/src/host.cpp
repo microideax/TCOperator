@@ -14,7 +14,7 @@
 #define PARTITION_NUM 1
 
 void getTxtSize (std::string file_name, int& lineNum) {
-    std::cout << "Getting file size ... " << file_name << std::endl;
+    std::cout << "Getting file size ... " << file_name;
     std::fstream file;
     int line_num = 0;
     file.open(file_name, std::ios::in);
@@ -26,6 +26,7 @@ void getTxtSize (std::string file_name, int& lineNum) {
     }
     file.close();
     lineNum = line_num;
+    std::cout << " " << lineNum << std::endl;
 }
 
 void getTxtContent (std::string file_name, int* array, int lineNum, bool is_edge) {
@@ -64,12 +65,13 @@ int main(int argc, char** argv) {
 
     sda::utils::CmdLineParser parser;
     parser.addSwitch("--xclbin_file", "-x", "input binary file string", "");
-    parser.addSwitch("--device_id", "-d", "device index", "0");
+    parser.addSwitch("--dataset_name", "-d", "dataset name", "facebook_combined");
     parser.parse(argc, argv);
 
     // Read settings
     std::string binaryFile = parser.value("xclbin_file");
-    int device_index = stoi(parser.value("device_id"));
+    std::string datasetName = parser.value("dataset_name");
+    int device_index = 0;
 
     if (argc < 3) {
         parser.printHelp();
@@ -84,7 +86,6 @@ int main(int argc, char** argv) {
 
     std::cout << "load graph dataset" << std::endl;
 
-    std::string datasetName = "facebook_combined";
     std::cout << " Read edge file ... " << std::endl;
 
     std::fstream edge_file;
