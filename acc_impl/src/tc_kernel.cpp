@@ -65,9 +65,29 @@ int highestPowerof2(int n) {
     return res;
 }
 
+int msb(unsigned int v) {
+	static const int pos[32] = { 0, 1, 28, 
+				     2, 29, 14, 24, 
+				     3, 30, 22, 20, 15, 25, 17,
+				     4, 8,  31, 27, 13, 23, 21, 19, 16,
+				     7, 26, 12, 18, 
+				     6, 11,
+				     5, 10, 9};
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v |= v >> 16;
+	v = (v >> 1) + 1;
+	return pos[(v* 0x077CB531) >> 27];
+}
+
+
 template <typename DT>
 int lbitBinarySearch(DT arr[], int low, int high, DT key){
-    int k = highestPowerof2(high);
+    // int k = highestPowerof2(high);
+    int lbit = msb(high);
+    int k = high ? 1 << lbit : 0;
     // int k = 0;
     // if (high > 0) {
     //     int pos = log2(high);
@@ -232,6 +252,9 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
         int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
         // std::cout<< "lens of lists: "<< len_a <<", "<< len_b << std::endl;
         
+        int short_list = 0;
+        int long_list = 0;
+
         if ((len_a != 0) && (len_b != 0)) {
             // burstCpyArray<int>(column_list_1, list_a, len_a, vertex_a_idx);
             // burstCpyArray<int>(column_list_2, list_b, len_b, vertex_b_idx);
@@ -246,10 +269,22 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
             // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
             // setIntersection(list_a, list_b, len_a, len_b, temp_count);
             /**/
-            if (len_a <= len_b){
-                setInterBinarySearch<int>(list_a, list_b, len_a, len_b, temp_count);
+            if (len_a < len_b){
+                short_list = len_a;
+                long_list = len_b;
             } else {
-                setInterBinarySearch<int>(list_b, list_a, len_b, len_a, temp_count);
+                short_list = len_b;
+                long_list = len_a;
+            }
+
+            if(long_list / short_list >= 32){
+                if (len_a <= len_b){
+                    setInterBinarySearch<int>(list_a, list_b, len_a, len_b, temp_count);
+                } else {
+                    setInterBinarySearch<int>(list_b, list_a, len_b, len_a, temp_count);
+                }
+            } else {
+                setIntersection(list_a, list_b, len_a, len_b, temp_count);
             }
             /**/
             triangle_count += temp_count[0];
