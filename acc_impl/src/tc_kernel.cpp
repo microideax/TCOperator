@@ -4,7 +4,7 @@
 #include <iostream>
 
 
-#define u512_t      ap_uint<512> 
+typedef struct v_datatype {int data[16];} int512;
 #define BUF_DEPTH   65536
 // use 512 bit width to full utilize bandwidth
 
@@ -17,16 +17,24 @@ void burstReadStrm(int length, DT* inArr, hls::stream<DT>& outStrm) {
     }
 }
 
+
+// need to add test txt file for debug.
 template <typename DT>
-void adjListCpy(DT* dst, DT* start_location, unsigned int len){
-    // cout<<"copy list: ";
-    for (unsigned int i=0; i<len; i++){
-//        for(unsigned int j = 0; j < 8; j++)
-//#pragma HLS pipeline ii = 1
-        *(dst+i) = *(start_location + i);
-        // cout<<*(dst+i) << " ";
+void adjListCpy(DT* dst, int512* start_location, int offset, int len){
+    int T = 16; // 512/32=16
+    int offset_begin = offset / T;
+    int offset_end = (offset + len + T - 1) / T;
+
+    for (int i = offset_begin; i < offset_end; i++) {
+#pragma HLS loop_tripcount min = 1000 max = 1000
+#pragma HLS pipeline ii = 1
+        for (unsigned int j = 0; j < T; j++) {
+#pragma HLS unroll
+            if (((i*T + j) < (offset + len)) && ((i*T + j) >= offset)) {
+                dst[i*T + j - offset] = start_location[i].data[j];
+            }
+        }
     }
-    // cout<<endl;
 }
 
 template <typename DT>
@@ -207,19 +215,18 @@ void setIntersectionForloop(int *list_a, int *list_b, int len_a, int len_b, int 
 
 
 extern "C" {
+void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
 
-void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* column_list_1, int* column_list_2, int edge_num, int* tc_number ) {
-
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem0 port = edge_list
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem0 port = edge_list
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem1 port = offset_list_1
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem1 port = offset_list_1
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem2 port = offset_list_2
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem2 port = offset_list_2
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem3 port = column_list_1
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem3 port = column_list_1
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem4 port = column_list_2
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem4 port = column_list_2
 #pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
     16 max_write_burst_length = 2 max_read_burst_length = 2  bundle = gmem5 port = tc_number
 
@@ -259,10 +266,10 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int* 
             // burstCpyArray<int>(column_list_1, list_a, len_a, vertex_a_idx);
             // burstCpyArray<int>(column_list_2, list_b, len_b, vertex_b_idx);
             if (previous_node_a != node_a){
-                adjListCpy<int>(list_a, &column_list_1[vertex_a_idx], len_a);   
+                adjListCpy<int>(list_a, column_list_1, vertex_a_idx, len_a);   
                 previous_node_a = node_a; 
             }
-            adjListCpy<int>(list_b, &column_list_2[vertex_b_idx], len_b);
+            adjListCpy<int>(list_b, column_list_2, vertex_b_idx, len_b);
 
             // Process setintersection on lists with the lens are not zeros
             int temp_count[1] = {0};
