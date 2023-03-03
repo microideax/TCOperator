@@ -244,57 +244,73 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     int list_b[BUF_DEPTH];
 // #pragma HLS RESOURCE variable=list_a core=XPM_MEMORY uram
 // #pragma HLS RESOURCE variable=list_b core=XPM_MEMORY uram
+    int edge_list_buf[32];
+    // int node_b_buf[16];
 
     int triangle_count = 0;
     int previous_node_a = -1;
-// use memcpy to copy the list_a and list_b from memory
-    for (int i = 0; i < edge_num; i+=1) {
-//#pragma HLS DATAFLOW
-        int node_a = edge_list[i*2];
-        int node_b = edge_list[i*2 + 1];
-        // std::cout<< "read nodes: "<< node_a <<", "<<node_b << std::endl;
-        int vertex_a_idx = offset_list_1[node_a];
-        int vertex_b_idx = offset_list_2[node_b];
-        int len_a = offset_list_1[node_a + 1] - vertex_a_idx;
-        int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
-        // std::cout<< "lens of lists: "<< len_a <<", "<< len_b << std::endl;
-        
-        int short_list = 0;
-        int long_list = 0;
 
-        if ((len_a != 0) && (len_b != 0)) {
-            // burstCpyArray<int>(column_list_1, list_a, len_a, vertex_a_idx);
-            // burstCpyArray<int>(column_list_2, list_b, len_b, vertex_b_idx);
-            if (previous_node_a != node_a){
-                adjListCpy<int>(list_a, column_list_1, vertex_a_idx, len_a);   
-                previous_node_a = node_a; 
-            }
-            adjListCpy<int>(list_b, column_list_2, vertex_b_idx, len_b);
 
-            // Process setintersection on lists with the lens are not zeros
-            int temp_count[1] = {0};
-            // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
-            // setIntersection(list_a, list_b, len_a, len_b, temp_count);
-            /**/
-            if (len_a < len_b){
-                short_list = len_a;
-                long_list = len_b;
+    main_loop: for (int i = 0; i < edge_num*2/32+1; i++) {
+//#pragma HLS DATAFLOW (need to refine the functions)
+        //load edge_list to edgelist buffer
+        for (int j = 0; j < 32; j++){
+            #pragma HLS pipeline ii=1
+            if(i*32 + j < edge_num*2){
+                edge_list_buf[j] = edge_list[i*32 + j];
             } else {
-                short_list = len_b;
-                long_list = len_a;
+                edge_list_buf[j] = -1;
             }
+        }
 
-            if(long_list / short_list >= 32){
-                if (len_a <= len_b){
-                    setInterBinarySearch<int>(list_a, list_b, len_a, len_b, temp_count);
-                } else {
-                    setInterBinarySearch<int>(list_b, list_a, len_b, len_a, temp_count);
+        int process_len = (i*16 < edge_num) ? 16 : (edge_num - i*16);
+        for (int k = 0; k < process_len; k++){
+            int node_a = edge_list_buf[k*2];
+            int node_b = edge_list_buf[k*2 + 1];
+            std::cout<< "read nodes: "<< node_a <<", "<<node_b << std::endl;
+            int vertex_a_idx = offset_list_1[node_a];
+            int vertex_b_idx = offset_list_2[node_b];
+            int len_a = offset_list_1[node_a + 1] - vertex_a_idx;
+            int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
+            std::cout<< "lens of lists: "<< len_a <<", "<< len_b << std::endl;
+            
+            int short_list = 0;
+            int long_list = 0;
+
+            if ((len_a != 0) && (len_b != 0) && (node_a != -1) && (node_b != -1)) {
+                // burstCpyArray<int>(column_list_1, list_a, len_a, vertex_a_idx);
+                // burstCpyArray<int>(column_list_2, list_b, len_b, vertex_b_idx);
+                if (previous_node_a != node_a){
+                    adjListCpy<int>(list_a, column_list_1, vertex_a_idx, len_a);   
+                    previous_node_a = node_a; 
                 }
-            } else {
-                setIntersection(list_a, list_b, len_a, len_b, temp_count);
+                adjListCpy<int>(list_b, column_list_2, vertex_b_idx, len_b);
+
+                // Process setintersection on lists with the lens are not zeros
+                int temp_count[1] = {0};
+                // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
+                // setIntersection(list_a, list_b, len_a, len_b, temp_count);
+                /**/
+                if (len_a < len_b){
+                    short_list = len_a;
+                    long_list = len_b;
+                } else {
+                    short_list = len_b;
+                    long_list = len_a;
+                }
+
+                if(long_list / short_list >= 32){
+                    if (len_a <= len_b){
+                        setInterBinarySearch<int>(list_a, list_b, len_a, len_b, temp_count);
+                    } else {
+                        setInterBinarySearch<int>(list_b, list_a, len_b, len_a, temp_count);
+                    }
+                } else {
+                    setIntersection(list_a, list_b, len_a, len_b, temp_count);
+                }
+                /**/
+                triangle_count += temp_count[0];
             }
-            /**/
-            triangle_count += temp_count[0];
         }
         // previous_node_a = node_a;
     }
