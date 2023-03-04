@@ -136,6 +136,7 @@ build: check-vitis check-device $(BINARY_CONTAINERS)
 .PHONY: xclbin
 xclbin: build
 
+VPP_LDFLAGS_krnl_tc += --config ./krnl_tc.cfg
 ############################## Setting Rules for Binary Containers (Building Kernels) ##############################
 $(TEMP_DIR)/tc.xo: src/tc_kernel.cpp
 	mkdir -p $(TEMP_DIR)
@@ -143,7 +144,7 @@ $(TEMP_DIR)/tc.xo: src/tc_kernel.cpp
 $(BUILD_DIR)/tc.xclbin: $(BINARY_CONTAINER_vadd_OBJS)
 	mkdir -p $(BUILD_DIR)
 ifeq ($(HOST_ARCH), x86)
-	$(VPP) $(VPP_FLAGS) -l $(VPP_LDFLAGS) --temp_dir $(TEMP_DIR) -o'$(BUILD_DIR)/tc.link.xclbin' $(+)
+	$(VPP) $(VPP_FLAGS) -l $(VPP_LDFLAGS) --temp_dir $(TEMP_DIR) $(VPP_LDFLAGS_krnl_tc) -o'$(BUILD_DIR)/tc.link.xclbin' $(+)
 	$(VPP) -p $(BUILD_DIR)/tc.link.xclbin -t $(TARGET) --platform $(PLATFORM) --package.out_dir $(PACKAGE_OUT) -o $(BUILD_DIR)/tc.xclbin
 else
 	$(VPP) $(VPP_FLAGS) -l $(VPP_LDFLAGS) --temp_dir $(TEMP_DIR) -o'$(BUILD_DIR)/tc.xclbin' $(+)
