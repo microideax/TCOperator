@@ -245,6 +245,10 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
 // #pragma HLS RESOURCE variable=list_a core=XPM_MEMORY uram
 // #pragma HLS RESOURCE variable=list_b core=XPM_MEMORY uram
     int edge_list_buf[32];
+    int a_index_buf[32];
+    int b_index_buf[32];
+    int len_a_buf[16];
+    int len_b_buf[16];
     // int node_b_buf[16];
 
     int triangle_count = 0;
@@ -264,14 +268,28 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
         }
 
         int process_len = (i*16 < edge_num) ? 16 : (edge_num - i*16);
+        for (int l = 0; l < process_len; l++){
+            a_index_buf[l*2] = offset_list_1[edge_list_buf[l*2]];
+            a_index_buf[l*2+1] = offset_list_1[edge_list_buf[l*2] + 1];
+            b_index_buf[l*2] = offset_list_2[edge_list_buf[l*2+1]];
+            b_index_buf[l*2+1] = offset_list_2[edge_list_buf[l*2+1] + 1];
+        }
+        for (int idx=0;idx<16; idx++){
+            len_a_buf[idx] = a_index_buf[idx*2+1] - a_index_buf[idx*2];
+            len_b_buf[idx] = b_index_buf[idx*2+1] - b_index_buf[idx*2];
+        }
         for (int k = 0; k < process_len; k++){
             int node_a = edge_list_buf[k*2];
             int node_b = edge_list_buf[k*2 + 1];
+            // int node_a = a_index_buf[k*2];
+            // int node_b = b_index_buf[k*2];
+            int vertex_a_idx = a_index_buf[k*2];
+            int vertex_b_idx = b_index_buf[k*2];
             std::cout<< "read nodes: "<< node_a <<", "<<node_b << std::endl;
-            int vertex_a_idx = offset_list_1[node_a];
-            int vertex_b_idx = offset_list_2[node_b];
-            int len_a = offset_list_1[node_a + 1] - vertex_a_idx;
-            int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
+            // int len_a = offset_list_1[node_a + 1] - vertex_a_idx;
+            // int len_b = offset_list_2[node_b + 1] - vertex_b_idx;
+            int len_a = len_a_buf[k];
+            int len_b = len_b_buf[k];
             std::cout<< "lens of lists: "<< len_a <<", "<< len_b << std::endl;
             
             int short_list = 0;
@@ -312,7 +330,6 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
                 triangle_count += temp_count[0];
             }
         }
-        // previous_node_a = node_a;
     }
     tc_number[0] = triangle_count;
 }
