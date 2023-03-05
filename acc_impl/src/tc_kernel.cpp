@@ -192,6 +192,36 @@ void setIntersection(int512 *list_a, int512 *list_b, int len_a, int len_b, int o
     tc_cnt[0] = count;
 }
 
+void loadEdgelist(int* edge_list, int* edge_list_buf, int offset, int loop_boundary){
+    for (int j = 0; j < 32; j++){
+#pragma HLS pipeline ii=1
+        if(j < loop_boundary){
+            edge_list_buf[j] = edge_list[offset*32 + j];
+        } else {
+            edge_list_buf[j] = -1;
+        }
+    }
+}
+
+void loadIndexbuf(int* a_index_buf, int* b_index_buf, int* offset_list_1, int* offset_list_2, int* edge_list_buf, int process_len){
+    for (int l = 0; l < 16; l++){
+#pragma HLS pipeline ii=1
+        if(l < process_len){
+            a_index_buf[l*2] = offset_list_1[edge_list_buf[l*2]];
+            a_index_buf[l*2+1] = offset_list_1[edge_list_buf[l*2] + 1];
+            b_index_buf[l*2] = offset_list_2[edge_list_buf[l*2+1]];
+            b_index_buf[l*2+1] = offset_list_2[edge_list_buf[l*2+1] + 1];
+        }
+    }
+}
+
+void updateLenbuf(int* len_a_buf, int* len_b_buf, int* a_index_buf, int* b_index_buf){
+    for (int idx=0;idx<16; idx++){
+        len_a_buf[idx] = a_index_buf[idx*2+1] - a_index_buf[idx*2];
+        len_b_buf[idx] = b_index_buf[idx*2+1] - b_index_buf[idx*2];
+    }
+}
+
 extern "C" {
 void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
 
@@ -230,35 +260,29 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     // int node_b_buf[16];
 
     int triangle_count = 0;
-    int previous_node_a = -1;
 
+    int main_loop_itr = edge_num*2/32 + 1;
+    int edge_boundary = edge_num * 2;
+    int loop_boundary = 32;
+    int process_len = 16;
 
-    main_loop: for (int i = 0; i < edge_num*2/32+1; i++) {
-//#pragma HLS DATAFLOW (need to refine the functions)
+    // main_loop: for (int i = 0; i < edge_num*2/32+1; i++) {
+    main_loop: for (int i = 0; i < main_loop_itr; i++) {
+#pragma HLS DATAFLOW
         //load edge_list to edgelist buffer
-        for (int j = 0; j < 32; j++){
-            #pragma HLS pipeline ii=1
-            if(i*32 + j < edge_num*2){
-                edge_list_buf[j] = edge_list[i*32 + j];
-            } else {
-                edge_list_buf[j] = -1;
-            }
-        }
+        loop_boundary = edge_boundary - i*32;
+        loadEdgelist(edge_list, edge_list_buf, i, loop_boundary);
 
-        int process_len = (i*16 < edge_num) ? 16 : (edge_num - i*16);
-        for (int l = 0; l < process_len; l++){
-            a_index_buf[l*2] = offset_list_1[edge_list_buf[l*2]];
-            a_index_buf[l*2+1] = offset_list_1[edge_list_buf[l*2] + 1];
-            b_index_buf[l*2] = offset_list_2[edge_list_buf[l*2+1]];
-            b_index_buf[l*2+1] = offset_list_2[edge_list_buf[l*2+1] + 1];
-        }
-        for (int idx=0;idx<16; idx++){
-            len_a_buf[idx] = a_index_buf[idx*2+1] - a_index_buf[idx*2];
-            len_b_buf[idx] = b_index_buf[idx*2+1] - b_index_buf[idx*2];
-        }
+        process_len = (i*16 < edge_num) ? 16 : (edge_num - i*16);
+        loadIndexbuf(a_index_buf, b_index_buf, offset_list_1, offset_list_2, edge_list_buf, process_len);
+
+        updateLenbuf(len_a_buf, len_b_buf, a_index_buf, b_index_buf);
+
         for (int k = 0; k < process_len; k++){
             int node_a = edge_list_buf[k*2];
             int node_b = edge_list_buf[k*2 + 1];
+            int previous_node_a = -1;
+
             // int node_a = a_index_buf[k*2];
             // int node_b = b_index_buf[k*2];
             int vertex_a_idx = a_index_buf[k*2];
@@ -284,9 +308,6 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
 
                 // Process setintersection on lists with the lens are not zeros
                 int temp_count[1] = {0};
-                // setIntersection(column_list_1, column_list_2, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
-                // setIntersection(list_a, list_b, len_a, len_b, temp_count);
-                /**/
 
                 if(len_b / len_a >= 32){
                     setInterBinarySearch(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
@@ -295,9 +316,6 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
                 } else {
                     setIntersection(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
                 }
-
-                // setIntersection(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
-                /**/
                 triangle_count += temp_count[0];
             }
         }
