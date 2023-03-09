@@ -136,9 +136,9 @@ build: check-vitis check-device $(BINARY_CONTAINERS)
 .PHONY: xclbin
 xclbin: build
 
-VPP_LDFLAGS_krnl_tc += --config ./krnl_tc.cfg
+VPP_LDFLAGS_krnl_tc += --config ./krnl_tc.cfg --config ./single_burst.ini
 ############################## Setting Rules for Binary Containers (Building Kernels) ##############################
-$(TEMP_DIR)/tc.xo: src/tc_kernel.cpp
+$(TEMP_DIR)/tc.xo: src/tc_kernel_new.cpp
 	mkdir -p $(TEMP_DIR)
 	$(VPP) $(VPP_FLAGS) -c -k TriangleCount --temp_dir $(TEMP_DIR)  -I'$(<D)' -o'$@' '$<'
 $(BUILD_DIR)/tc.xclbin: $(BINARY_CONTAINER_vadd_OBJS)

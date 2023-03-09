@@ -8,14 +8,15 @@ typedef struct v_datatype {int data[16];} int512;
 #define BUF_DEPTH   4096
 #define T           16
 #define BURST_LEN   8
+const int c_size = BUF_DEPTH;
 // use 512 bit width to full utilize bandwidth
 
 template <typename DT>
-void burstReadStrm(int length, DT* inArr, hls::stream<DT>& outStrm) {
+void burstReadStrm(int length, DT* inArr, hls::stream<DT>& inStrm) {
     for (int i = 0; i < length; i++) {
-#pragma HLS loop_tripcount min = 1000 max = 1000
-#pragma HLS pipeline ii = 1
-        outStrm.write(inArr[i]);
+#pragma HLS loop_tripcount min = c_size max = c_size
+// #pragma HLS pipeline ii = 1
+        inStrm << inArr[i];
     }
 }
 
@@ -193,6 +194,7 @@ void setIntersection(int512 *list_a, int512 *list_b, int len_a, int len_b, int o
 }
 
 void loadEdgelist(int* edge_list, int* edge_list_buf, int offset, int loop_boundary){
+#pragma HLS inline
     for (int j = 0; j < 32; j++){
 #pragma HLS pipeline ii=1
         if(j < loop_boundary){
@@ -204,6 +206,7 @@ void loadEdgelist(int* edge_list, int* edge_list_buf, int offset, int loop_bound
 }
 
 void loadIndexbuf(int* a_index_buf, int* b_index_buf, int* offset_list_1, int* offset_list_2, int* edge_list_buf, int process_len){
+#pragma HLS inline
     for (int l = 0; l < 16; l++){
 #pragma HLS pipeline ii=1
         if(l < process_len){
@@ -216,6 +219,7 @@ void loadIndexbuf(int* a_index_buf, int* b_index_buf, int* offset_list_1, int* o
 }
 
 void updateLenbuf(int* len_a_buf, int* len_b_buf, int* a_index_buf, int* b_index_buf){
+#pragma HLS inline
     for (int idx=0;idx<16; idx++){
         len_a_buf[idx] = a_index_buf[idx*2+1] - a_index_buf[idx*2];
         len_b_buf[idx] = b_index_buf[idx*2+1] - b_index_buf[idx*2];
@@ -252,7 +256,7 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     int512 list_b[BUF_DEPTH];
 // #pragma HLS RESOURCE variable=list_a core=XPM_MEMORY uram
 // #pragma HLS RESOURCE variable=list_b core=XPM_MEMORY uram
-    int edge_list_buf[32];
+    int edge_list_buf[32]; // buffer 16 <V1, V2> pairs
     int a_index_buf[32];
     int b_index_buf[32];
     int len_a_buf[16];
@@ -265,11 +269,21 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     int edge_boundary = edge_num * 2;
     int loop_boundary = 32;
     int process_len = 16;
+    int bs_counter = 0;
+
+    static hls::stream<int> edgeInStrm("input_edge");
+#pragma HLS STREAM variable = edgeInStrm depth=32
+
+    // loadEdgelist(edge_list, edgeInStrm, 0, edge_num*2);
+    // loadOffset(edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, offset_list_1, offset_list_2);
+    // loadAdjList(a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, column_list_1, column_list_2, list_a, list_b);
+    // interSection(list_a, list_b, len_a_strm, len_b_strm, triCount);
 
     // main_loop: for (int i = 0; i < edge_num*2/32+1; i++) {
     main_loop: for (int i = 0; i < main_loop_itr; i++) {
-#pragma HLS DATAFLOW
         //load edge_list to edgelist buffer
+        // i%2==0, edge_list_buf_0; else edge_list_buf_1
+// #pragma HLS pipeline rewind
         loop_boundary = edge_boundary - i*32;
         loadEdgelist(edge_list, edge_list_buf, i, loop_boundary);
 
@@ -311,15 +325,19 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
 
                 if(len_b / len_a >= 32){
                     setInterBinarySearch(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
-                } else if (len_a / len_b >= 32) {
+                   bs_counter++;
+                } else if (len_a / len_b > 32) {
                     setInterBinarySearch(list_b, list_a, len_b, len_a, vertex_b_idx, vertex_a_idx, temp_count);
-                } else {
-                    setIntersection(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
+                   bs_counter++;
+                } 
+		        else {
+                   setIntersection(list_a, list_b, len_a, len_b, vertex_a_idx, vertex_b_idx, temp_count);
                 }
                 triangle_count += temp_count[0];
             }
         }
     }
     tc_number[0] = triangle_count;
+    std::cout<<"Binary searched edge number: "<< bs_counter << std::endl;
 }
 }
