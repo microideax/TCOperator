@@ -98,6 +98,7 @@ void loadEdgelist(int length, DT* inArr, hls::stream<DT>& inStrm) {
         }
         */
     }
+    std::cout << "load " << length << "edges" << std::endl;
 }
 
 template <typename DT>
@@ -115,9 +116,10 @@ void loadOffset(int* offset_list_1, int* offset_list_2, int length,
         b_idx_strm << b_idx;
         len_a_strm << len_a;
         len_b_strm << len_b;
-        std::cout << "edgelist: " << a_offset << "  " << b_offset << std::endl;
-        std::cout << "offset & len: " << a_idx << " " << b_idx <<" "<< len_a<<" "<<len_b << std::endl;
+        // std::cout << "edgelist: " << a_offset << "  " << b_offset << std::endl;
+        // std::cout << "offset & len: " << a_idx << " " << b_idx <<" "<< len_a<<" "<<len_b << std::endl;
     }
+    std::cout << "load " << length << "offsets" << std::endl;
 }
 
 template <typename DT>
@@ -142,6 +144,7 @@ void loadAdjlist(int512* column_list_1, int512* column_list_2, int length,
         a_idx_strm_o << list_a_offset;
         b_idx_strm_o << list_b_offset;
     }
+    std::cout << "load " << length << "pair of adj lists" << std::endl;
 }
 
 template <typename DT>
@@ -216,9 +219,9 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
     loadAdjlist<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, 
                 len_a_strm_o, len_b_strm_o, a_idx_strm_o, b_idx_strm_o, list_a, list_b);
-    // setInterStrm<int>(list_a, list_b, edge_num, a_idx_strm_o, b_idx_strm_o, len_a_strm_o, len_b_strm_o, triCount);
+    setInterStrm<int>(list_a, list_b, edge_num, a_idx_strm_o, b_idx_strm_o, len_a_strm_o, len_b_strm_o, triCount);
 
-    // tc_number[0] = triCount[0];
+    tc_number[0] = triCount[0];
 
 }
 }
