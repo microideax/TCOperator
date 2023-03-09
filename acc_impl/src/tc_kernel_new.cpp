@@ -213,10 +213,10 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     int triCount[1]={0};
 
     loadEdgelist<int>(edge_num_local, edge_list, edgeInStrm);
-    loadOffset<int>(offset_list_1, offset_list_2, edge_num_local, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
-    // loadAdjlist<int>(column_list_1, column_list_2, edge_num_local, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, 
-                // len_a_strm_o, len_b_strm_o, a_idx_strm_o, b_idx_strm_o, list_a, list_b);
-    // setInterStrm<int>(list_a, list_b, edge_num_local, a_idx_strm_o, b_idx_strm_o, len_a_strm_o, len_b_strm_o, triCount);
+    loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
+    loadAdjlist<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, 
+                len_a_strm_o, len_b_strm_o, a_idx_strm_o, b_idx_strm_o, list_a, list_b);
+    // setInterStrm<int>(list_a, list_b, edge_num, a_idx_strm_o, b_idx_strm_o, len_a_strm_o, len_b_strm_o, triCount);
 
     // tc_number[0] = triCount[0];
 
