@@ -14,9 +14,12 @@ const int c_size = BUF_DEPTH;
 
 // need to add test txt file for debug.
 void adjListCpy(int512* dst, int512* start_location, int offset, int len){
+    
     int offset_begin = offset / T;
     int offset_end = (offset + len + T - 1) / T;
     int loop_num = (offset_end - offset_begin + BURST_LEN - 1) / BURST_LEN;
+
+    // std::cout << "adj list copy:  " << offset_begin << ", " << offset_end << ",  loop num: "<< loop_num << std::endl;
 
     for (int i = 0; i < loop_num; i++) {
         for (int j = 0; j < BURST_LEN; j++) {
@@ -98,7 +101,7 @@ void loadEdgelist(int length, DT* inArr, hls::stream<DT>& inStrm) {
         }
         */
     }
-    std::cout << "load " << length << "edges" << std::endl;
+    // std::cout << "load " << length/2 << "edges" << std::endl;
 }
 
 template <typename DT>
@@ -119,7 +122,7 @@ void loadOffset(int* offset_list_1, int* offset_list_2, int length,
         // std::cout << "edgelist: " << a_offset << "  " << b_offset << std::endl;
         // std::cout << "offset & len: " << a_idx << " " << b_idx <<" "<< len_a<<" "<<len_b << std::endl;
     }
-    std::cout << "load " << length << "offsets" << std::endl;
+    // std::cout << "load " << length << "offsets" << std::endl;
 }
 
 template <typename DT>
@@ -136,6 +139,8 @@ void loadAdjlist(int512* column_list_1, int512* column_list_2, int length,
         int list_b_offset = b_idx_strm.read();
         int list_b_len = len_b_strm.read();
 
+        // std::cout << "offset & len: " << list_a_offset << " " << list_b_offset <<" "<< list_a_len<<" "<<list_b_len << std::endl;
+
         adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
         adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
 
@@ -143,8 +148,27 @@ void loadAdjlist(int512* column_list_1, int512* column_list_2, int length,
         len_b_strm_o << list_b_len;
         a_idx_strm_o << list_a_offset;
         b_idx_strm_o << list_b_offset;
+
+        // std::cout << "List a: ";
+        // for(int j = 0; j< list_a_len/16 +1; j++){
+        //     for (int k=0; k<16; k++){
+        //         // if(j*16 + k < list_a_len){
+        //             std::cout<< list_a[j].data[k] << "  ";
+        //         // }
+        //     }
+        // }
+        // std::cout<< std::endl;
+        // std::cout << "List b: ";
+        // for(int j = 0; j< list_b_len/16 +1; j++){
+        //     for(int k=0; k<16; k++){
+        //         // if(j*16 + k < list_b_len){
+        //             std::cout<< list_b[j].data[k] << "  ";
+        //         // }
+        //     }
+        // }
+        // std::cout<< std::endl;
     }
-    std::cout << "load " << length << "pair of adj lists" << std::endl;
+    // std::cout << "load " << length << "pair of adj lists" << std::endl;
 }
 
 template <typename DT>
@@ -161,6 +185,27 @@ void setInterStrm(int512* list_a, int512* list_b, int length,
         int len_b = len_b_strm.read();
         setIntersection(list_a, list_b, len_a, len_b, offset_a, offset_b, temp_count);
         triangle_count += temp_count[0];
+
+        std::cout << "offset & len: " << offset_a << " " << offset_b <<" "<< len_a<<" "<<len_b << std::endl;
+
+        std::cout << "List a: ";
+        for(int j = 0; j< len_a/16 +1; j++){
+            for (int k=0; k<16; k++){
+                // if(j*16 + k < list_a_len){
+                    std::cout<< list_a[j].data[k] << "  ";
+                // }
+            }
+        }
+        std::cout<< std::endl;
+        std::cout << "List b: ";
+        for(int j = 0; j< len_b/16 +1; j++){
+            for(int k=0; k<16; k++){
+                // if(j*16 + k < list_b_len){
+                    std::cout<< list_b[j].data[k] << "  ";
+                // }
+            }
+        }
+        std::cout<< std::endl;
     }
     count[0] = triangle_count;
 }
