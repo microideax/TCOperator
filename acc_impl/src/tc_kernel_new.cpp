@@ -96,7 +96,6 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
 #pragma HLS array_partition variable=list_b cyclic factor=16
 
     for(int i = 0; i < length; i++) {
-#pragma HLS pipeline
 
         int list_a_offset = a_idx_strm.read();
         int list_a_len = len_a_strm.read();
