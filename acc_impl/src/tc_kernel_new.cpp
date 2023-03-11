@@ -5,7 +5,7 @@
 
 
 typedef struct v_datatype {int data[16];} int512;
-#define BUF_DEPTH   4096
+#define BUF_DEPTH   65536
 #define T           16
 #define BURST_LEN   8
 const int c_size = BUF_DEPTH;
@@ -13,47 +13,34 @@ const int c_size = BUF_DEPTH;
 
 
 // need to add test txt file for debug.
-void adjListCpy(int512* dst, int512* start_location, int offset, int len){
+void adjListCpy(int* dst, int512* start_location, int offset, int len){
     
     int offset_begin = offset / T;
     int offset_end = (offset + len + T - 1) / T;
-    int loop_num = (offset_end - offset_begin + BURST_LEN - 1) / BURST_LEN;
-
-    // std::cout << "adj list copy:  " << offset_begin << ", " << offset_end << ",  loop num: "<< loop_num << std::endl;
-
-    for (int i = 0; i < loop_num; i++) {
-        for (int j = 0; j < BURST_LEN; j++) {
-#pragma HLS pipeline II=1
-            if ((i*BURST_LEN + j) < (offset_end - offset_begin)) {
-                for (int k = 0; k < T; k++) {
+    int offset_idx = offset & 0xf;
+    for (int i = offset_begin; i < offset_end; i++) {
+#pragma HLS pipeline
+        int512 temp = start_location[i];
+        for (int j = 0; j < T; j++) {
 #pragma HLS unroll
-                    dst[i*BURST_LEN + j].data[k] = start_location[i*BURST_LEN + j + offset_begin].data[k];
-                }
-            }
+            int t = (i - offset_begin) * T + j - offset_idx;
+            if (t >= 0)
+                dst[t] = temp.data[j];
         }
     }
 }
 
-void setIntersection(int512 *list_a, int512 *list_b, int len_a, int len_b, int offset_a, int offset_b, int* tc_cnt)
+void setIntersection(int* list_a, int* list_b, int len_a, int len_b, int* tc_cnt)
 {
     #pragma HLS inline off
     int count = 0;
     int idx_a = 0, idx_b = 0;
-    int initial_512_a = offset_a & 0xf;
-    int initial_512_b = offset_b & 0xf;
     while ((idx_a < len_a) && (idx_b < len_b))
     {
 #pragma HLS pipeline ii=1
 
-        int a_512_t = initial_512_a + idx_a;
-        int a_512_block = a_512_t >> 4;
-        int a_512_bias = a_512_t & 0xf;
-        int value_a = list_a[a_512_block].data[a_512_bias];
-
-        int b_512_t = initial_512_b + idx_b;
-        int b_512_block = b_512_t >> 4;
-        int b_512_bias = b_512_t & 0xf;
-        int value_b = list_b[b_512_block].data[b_512_bias];
+        int value_a = list_a[idx_a];
+        int value_b = list_b[idx_b];
 
         if(value_a < value_b)
             idx_a++;
@@ -68,47 +55,20 @@ void setIntersection(int512 *list_a, int512 *list_b, int len_a, int len_b, int o
     tc_cnt[0] = count;
 }
 
-void loadIndexbuf(int* a_index_buf, int* b_index_buf, int* offset_list_1, int* offset_list_2, int* edge_list_buf, int process_len){
-    for (int l = 0; l < 16; l++){
-#pragma HLS pipeline ii=1
-        if(l < process_len){
-            a_index_buf[l*2] = offset_list_1[edge_list_buf[l*2]];
-            a_index_buf[l*2+1] = offset_list_1[edge_list_buf[l*2] + 1];
-            b_index_buf[l*2] = offset_list_2[edge_list_buf[l*2+1]];
-            b_index_buf[l*2+1] = offset_list_2[edge_list_buf[l*2+1] + 1];
-        }
-    }
-}
-
-void updateLenbuf(int* len_a_buf, int* len_b_buf, int* a_index_buf, int* b_index_buf){
-    for (int idx=0;idx<16; idx++){
-        len_a_buf[idx] = a_index_buf[idx*2+1] - a_index_buf[idx*2];
-        len_b_buf[idx] = b_index_buf[idx*2+1] - b_index_buf[idx*2];
-    }
-}
-
 template <typename DT>
 void loadEdgelist(int length, DT* inArr, hls::stream<DT>& inStrm) {
     for (int i = 0; i < length; i++) {
 #pragma HLS loop_tripcount min = c_size max = c_size
-// #pragma HLS pipeline ii = 1
+#pragma HLS pipeline ii = 1
         inStrm << inArr[i];
-        /*
-        if (i%2==0){
-            std::cout<<"edgelist: "<< inArr[i] << "  ";
-        } else{
-            std::cout << inArr[i] << std::endl;
-        }
-        */
     }
-    // std::cout << "load " << length/2 << "edges" << std::endl;
 }
 
 template <typename DT>
 void loadOffset(int* offset_list_1, int* offset_list_2, int length,
                 hls::stream<DT>& edgestrm, hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
                 hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm){
-    for(int i=0; i< length; i++){
+    for(int i = 0; i < length; i++) {
         int a_offset = edgestrm.read();
         int b_offset = edgestrm.read();
         int a_idx = offset_list_1[a_offset];
@@ -119,93 +79,35 @@ void loadOffset(int* offset_list_1, int* offset_list_2, int length,
         b_idx_strm << b_idx;
         len_a_strm << len_a;
         len_b_strm << len_b;
-        // std::cout << "edgelist: " << a_offset << "  " << b_offset << std::endl;
-        // std::cout << "offset & len: " << a_idx << " " << b_idx <<" "<< len_a<<" "<<len_b << std::endl;
     }
-    // std::cout << "load " << length << "offsets" << std::endl;
 }
 
 template <typename DT>
-void loadAdjlist(int512* column_list_1, int512* column_list_2, int length,
+void procIntersec(int512* column_list_1, int512* column_list_2, int length,
                  hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
                  hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,
-                 hls::stream<DT>& len_a_strm_o, hls::stream<DT>& len_b_strm_o,
-                 hls::stream<DT>& a_idx_strm_o, hls::stream<DT>& b_idx_strm_o,
-                 int512* list_a, int512* list_b){
+                 int* count){
     
-    for(int i = 0; i<length; i++){
+    int temp_count[1] = {0};
+    int triangle_count = 0;
+    int list_a [BUF_DEPTH];
+    int list_b [BUF_DEPTH];
+#pragma HLS array_partition variable=list_a cyclic factor=16
+#pragma HLS array_partition variable=list_b cyclic factor=16
+
+    for(int i = 0; i < length; i++) {
+#pragma HLS pipeline
+
         int list_a_offset = a_idx_strm.read();
         int list_a_len = len_a_strm.read();
         int list_b_offset = b_idx_strm.read();
         int list_b_len = len_b_strm.read();
 
-        // std::cout << "offset & len: " << list_a_offset << " " << list_b_offset <<" "<< list_a_len<<" "<<list_b_len << std::endl;
-
         adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
         adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
 
-        len_a_strm_o << list_a_len;
-        len_b_strm_o << list_b_len;
-        a_idx_strm_o << list_a_offset;
-        b_idx_strm_o << list_b_offset;
-
-        // std::cout << "List a: ";
-        // for(int j = 0; j< list_a_len/16 +1; j++){
-        //     for (int k=0; k<16; k++){
-        //         // if(j*16 + k < list_a_len){
-        //             std::cout<< list_a[j].data[k] << "  ";
-        //         // }
-        //     }
-        // }
-        // std::cout<< std::endl;
-        // std::cout << "List b: ";
-        // for(int j = 0; j< list_b_len/16 +1; j++){
-        //     for(int k=0; k<16; k++){
-        //         // if(j*16 + k < list_b_len){
-        //             std::cout<< list_b[j].data[k] << "  ";
-        //         // }
-        //     }
-        // }
-        // std::cout<< std::endl;
-    }
-    // std::cout << "load " << length << "pair of adj lists" << std::endl;
-}
-
-template <typename DT>
-void setInterStrm(int512* list_a, int512* list_b, int length,
-                hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm,
-                hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,
-                int* count){
-    int temp_count[1] = {0};
-    int triangle_count = 0;
-    for(int i = 0; i<length; i++){
-        int offset_a = a_idx_strm.read();
-        int offset_b = b_idx_strm.read();
-        int len_a = len_a_strm.read();
-        int len_b = len_b_strm.read();
-        setIntersection(list_a, list_b, len_a, len_b, offset_a, offset_b, temp_count);
+        setIntersection(list_a, list_b, list_a_len, list_b_len, temp_count);
         triangle_count += temp_count[0];
-
-        std::cout << "offset & len: " << offset_a << " " << offset_b <<" "<< len_a<<" "<<len_b << std::endl;
-
-        std::cout << "List a: ";
-        for(int j = 0; j< len_a/16 +1; j++){
-            for (int k=0; k<16; k++){
-                // if(j*16 + k < list_a_len){
-                    std::cout<< list_a[j].data[k] << "  ";
-                // }
-            }
-        }
-        std::cout<< std::endl;
-        std::cout << "List b: ";
-        for(int j = 0; j< len_b/16 +1; j++){
-            for(int k=0; k<16; k++){
-                // if(j*16 + k < list_b_len){
-                    std::cout<< list_b[j].data[k] << "  ";
-                // }
-            }
-        }
-        std::cout<< std::endl;
     }
     count[0] = triangle_count;
 }
@@ -236,9 +138,10 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
 #pragma HLS INTERFACE s_axilite port = tc_number bundle = control
 #pragma HLS INTERFACE s_axilite port = return bundle = control
 
+#pragma HLS dataflow
 // Initial local memory space of list_a and list_b
-    int512 list_a[BUF_DEPTH];
-    int512 list_b[BUF_DEPTH];
+    // int512 list_a[BUF_DEPTH];
+    // int512 list_b[BUF_DEPTH];
 
 // local registers
     int edge_num_local = edge_num*2;
@@ -255,16 +158,14 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
 #pragma HLS STREAM variable = len_a_strm depth=16
 #pragma HLS STREAM variable = len_b_strm depth=16
     static hls::stream<int> len_a_strm_o, len_b_strm_o;
-#pragma HLS STREAM variable = len_a_strm depth=16
-#pragma HLS STREAM variable = len_b_strm depth=16
+#pragma HLS STREAM variable = len_a_strm_o depth=16
+#pragma HLS STREAM variable = len_b_strm_o depth=16
 
     int triCount[1]={0};
 
     loadEdgelist<int>(edge_num_local, edge_list, edgeInStrm);
     loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
-    loadAdjlist<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, 
-                len_a_strm_o, len_b_strm_o, a_idx_strm_o, b_idx_strm_o, list_a, list_b);
-    setInterStrm<int>(list_a, list_b, edge_num, a_idx_strm_o, b_idx_strm_o, len_a_strm_o, len_b_strm_o, triCount);
+    procIntersec<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, triCount);
 
     tc_number[0] = triCount[0];
 
