@@ -5,7 +5,7 @@
 
 
 typedef struct v_datatype {int data[16];} int512;
-#define BUF_DEPTH   65536
+#define BUF_DEPTH   4096
 #define T           16
 #define BURST_LEN   8
 const int c_size = BUF_DEPTH;
@@ -32,7 +32,7 @@ void adjListCpy(int* dst, int512* start_location, int offset, int len){
 
 void setIntersection(int* list_a, int* list_b, int len_a, int len_b, int* tc_cnt)
 {
-    #pragma HLS inline off
+#pragma HLS inline off
     int count = 0;
     int idx_a = 0, idx_b = 0;
     while ((idx_a < len_a) && (idx_b < len_b))
@@ -88,12 +88,12 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
                  hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,
                  int* count){
     
-    int temp_count[1] = {0};
+    // int temp_count[1] = {0};
     int triangle_count = 0;
-    int list_a [BUF_DEPTH];
-    int list_b [BUF_DEPTH];
-#pragma HLS array_partition variable=list_a cyclic factor=16
-#pragma HLS array_partition variable=list_b cyclic factor=16
+    int list_a [BUF_DEPTH][T];
+    int list_b [BUF_DEPTH][T];
+#pragma HLS array_partition variable=list_a type=complete dim=2
+#pragma HLS array_partition variable=list_b type=complete dim=2
 
     for(int i = 0; i < length; i++) {
 
@@ -102,11 +102,61 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
         int list_b_offset = b_idx_strm.read();
         int list_b_len = len_b_strm.read();
 
-        adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
-        adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
+        // adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
+        // adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
+    
+        int o_begin_a = list_a_offset / T;
+        int o_end_a = (list_a_offset + list_a_len + T - 1) / T;
+        int o_begin_b = list_b_offset / T;
+        int o_end_b = (list_b_offset + list_b_len + T - 1) / T;
 
-        setIntersection(list_a, list_b, list_a_len, list_b_len, temp_count);
-        triangle_count += temp_count[0];
+
+        loop_a_adj_cpy: for (int i = o_begin_a; i < o_end_a; i++) {
+#pragma HLS pipeline
+            int512 temp_a = column_list_1[i];
+            for (int j = 0; j < T; j++) {
+#pragma HLS unroll
+                list_a[i - o_begin_a][j] = temp_a.data[j];
+            }
+        }
+
+        loop_b_adj_cpy: for (int i = o_begin_b; i < o_end_b; i++) {
+#pragma HLS pipeline
+            int512 temp_b = column_list_2[i];
+            for (int j = 0; j < T; j++) {
+#pragma HLS unroll
+                list_b[i - o_begin_b][j] = temp_b.data[j];
+            }
+        }
+
+        // setIntersection(list_a, list_b, list_a_len, list_b_len, temp_count);
+        int count = 0;
+        int o_idx_a = list_a_offset & 0xf;
+        int o_idx_b = list_b_offset & 0xf;
+        int idx_a = o_idx_a, idx_b = o_idx_b;
+        loop_set_inetrsection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len + o_idx_b))
+        {
+#pragma HLS pipeline ii=1
+            int a_dim_1 = idx_a / T;
+            int a_dim_2 = idx_a & 0xf;
+
+            int b_dim_1 = idx_b / T;
+            int b_dim_2 = idx_b & 0xf;
+
+            int value_a = list_a[a_dim_1][a_dim_2];
+            int value_b = list_b[b_dim_1][b_dim_2];
+
+            if(value_a < value_b)
+                idx_a++;
+            else if (value_a > value_b)
+                idx_b++;
+            else {
+                count++;
+                idx_a++;
+                idx_b++;
+            }
+        }
+        triangle_count += count;
     }
     count[0] = triangle_count;
 }
