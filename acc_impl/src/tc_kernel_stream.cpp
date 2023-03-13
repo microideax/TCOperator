@@ -1,0 +1,188 @@
+//////////// hw_emu and hw hang , while sw_emu pass ///////////////
+
+
+#include <stdint.h>
+#include <hls_stream.h>
+#include <hls_math.h>
+#include <iostream>
+
+
+typedef struct v_datatype {int data[16];} int512;
+#define BUF_DEPTH   65536
+#define T           16
+#define BURST_LEN   8
+const int c_size = BUF_DEPTH;
+// use 512 bit width to full utilize bandwidth
+
+
+// need to add test txt file for debug.
+void adjListCpy(hls::stream<int>& dst, int512* start_location, int offset, int len) {
+    
+    int offset_begin = offset / T;
+    int offset_end = (offset + len + T - 1) / T;
+    int offset_idx = offset & 0xf;
+    for (int i = offset_begin; i < offset_end; i++) {
+        int512 temp = start_location[i];
+        for (int j = 0; j < T; j++) {
+            int t = (i - offset_begin) * T + j - offset_idx;
+            if ((t >= 0) && (t < len))
+                dst << temp.data[j];
+        }
+    }
+}
+
+void setIntersection(hls::stream<int>& list_a, hls::stream<int>& list_b, int len_a, int len_b, int* tc_cnt)
+{
+    #pragma HLS inline off
+    int count = 0;
+    int value_a, value_b;
+    int order = 0; // read from stream, 0 from a & b, 1 from a, 2 from b;
+    // order = 0, a & b not empty
+    // order = 1, a not empty
+    // order = 2, b not empty
+    while (((!list_a.empty()) && (!list_b.empty()) && (order == 0)) || 
+           ((!list_a.empty()) && (order == 1)) || 
+           ((!list_b.empty()) && (order == 2)))
+    {
+#pragma HLS pipeline ii=1
+        if (order == 0) {
+            value_a = list_a.read();
+            value_b = list_b.read();
+        } else if (order == 1) {
+            value_a = list_a.read();
+        } else if (order == 2) {
+            value_b = list_b.read();
+        }
+
+        if (value_a < value_b) {
+            order = 1;
+        } else if (value_a > value_b) {
+            order = 2;
+        } else {
+            count++;
+            order = 0;
+        }
+    }
+
+    while (!list_a.empty()) {list_a.read();}
+    while (!list_b.empty()) {list_b.read();}
+    tc_cnt[0] = count;
+}
+
+template <typename DT>
+void loadEdgelist(int length, DT* inArr, hls::stream<DT>& inStrm) {
+    for (int i = 0; i < length; i++) {
+#pragma HLS loop_tripcount min = c_size max = c_size
+#pragma HLS pipeline ii = 1
+        inStrm << inArr[i];
+    }
+}
+
+template <typename DT>
+void loadOffset(int* offset_list_1, int* offset_list_2, int length,
+                hls::stream<DT>& edgestrm, hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
+                hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm){
+    for(int i = 0; i < length; i++) {
+        int a_offset = edgestrm.read();
+        int b_offset = edgestrm.read();
+        int a_idx = offset_list_1[a_offset];
+        int b_idx = offset_list_2[b_offset];
+        int len_a = offset_list_1[a_offset +1] - a_idx;
+        int len_b = offset_list_2[b_offset +1] - b_idx;
+        a_idx_strm << a_idx;
+        b_idx_strm << b_idx;
+        len_a_strm << len_a;
+        len_b_strm << len_b;
+    }
+}
+
+template <typename DT>
+void procIntersec(int512* column_list_1, int512* column_list_2, int length,
+                 hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
+                 hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,
+                 int* count){
+    
+    int temp_count[1] = {0};
+    int triangle_count = 0;
+//     int list_a [BUF_DEPTH];
+//     int list_b [BUF_DEPTH];
+// #pragma HLS array_partition variable=list_a cyclic factor=16
+// #pragma HLS array_partition variable=list_b cyclic factor=16
+    hls::stream<int> list_a, list_b;
+#pragma HLS STREAM variable = list_a depth=32
+#pragma HLS STREAM variable = list_b depth=32
+
+    for(int i = 0; i < length; i++) {
+
+        int list_a_offset = a_idx_strm.read();
+        int list_a_len = len_a_strm.read();
+        int list_b_offset = b_idx_strm.read();
+        int list_b_len = len_b_strm.read();
+
+        adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
+        adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
+
+        setIntersection(list_a, list_b, list_a_len, list_b_len, temp_count);
+        triangle_count += temp_count[0];
+    }
+    count[0] = triangle_count;
+}
+
+
+extern "C" {
+void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
+
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem0 port = edge_list
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem1 port = offset_list_1
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem2 port = offset_list_2
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem3 port = column_list_1
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem4 port = column_list_2
+#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+    16 max_write_burst_length = 2 max_read_burst_length = 2  bundle = gmem5 port = tc_number
+
+#pragma HLS INTERFACE s_axilite port = edge_list bundle = control
+#pragma HLS INTERFACE s_axilite port = offset_list_1 bundle = control
+#pragma HLS INTERFACE s_axilite port = offset_list_2 bundle = control
+#pragma HLS INTERFACE s_axilite port = column_list_1 bundle = control
+#pragma HLS INTERFACE s_axilite port = column_list_2 bundle = control
+#pragma HLS INTERFACE s_axilite port = edge_num bundle = control
+#pragma HLS INTERFACE s_axilite port = tc_number bundle = control
+#pragma HLS INTERFACE s_axilite port = return bundle = control
+
+// Initial local memory space of list_a and list_b
+    // int512 list_a[BUF_DEPTH];
+    // int512 list_b[BUF_DEPTH];
+
+// local registers
+    int edge_num_local = edge_num*2;
+
+    static hls::stream<int> edgeInStrm("input_edge");
+#pragma HLS STREAM variable = edgeInStrm depth=32
+    static hls::stream<int> a_idx_strm, b_idx_strm;
+#pragma HLS STREAM variable = a_idx_strm depth=16
+#pragma HLS STREAM variable = b_idx_strm depth=16
+    static hls::stream<int> a_idx_strm_o, b_idx_strm_o;
+#pragma HLS STREAM variable = a_idx_strm_o depth=16
+#pragma HLS STREAM variable = b_idx_strm_o depth=16
+    static hls::stream<int> len_a_strm, len_b_strm;
+#pragma HLS STREAM variable = len_a_strm depth=16
+#pragma HLS STREAM variable = len_b_strm depth=16
+    static hls::stream<int> len_a_strm_o, len_b_strm_o;
+#pragma HLS STREAM variable = len_a_strm_o depth=16
+#pragma HLS STREAM variable = len_b_strm_o depth=16
+
+    int triCount[1]={0};
+
+    loadEdgelist<int>(edge_num_local, edge_list, edgeInStrm);
+    loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
+    procIntersec<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, triCount);
+
+    tc_number[0] = triCount[0];
+
+}
+}
