@@ -5,8 +5,9 @@
 
 
 typedef struct v_datatype {int data[16];} int512;
-#define BUF_DEPTH   4096
+#define BUF_DEPTH   512
 #define T           16
+#define T_offset    4
 #define BURST_LEN   8
 const int c_size = BUF_DEPTH;
 // use 512 bit width to full utilize bandwidth
@@ -95,6 +96,8 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
 #pragma HLS array_partition variable=list_a type=complete dim=2
 #pragma HLS array_partition variable=list_b type=complete dim=2
 
+    int previous_a_offset = -1;
+
     for(int i = 0; i < length; i++) {
 
         int list_a_offset = a_idx_strm.read();
@@ -104,21 +107,23 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
 
         // adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
         // adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
-    
-        int o_begin_a = list_a_offset / T;
-        int o_end_a = (list_a_offset + list_a_len + T - 1) / T;
-        int o_begin_b = list_b_offset / T;
-        int o_end_b = (list_b_offset + list_b_len + T - 1) / T;
 
+        int o_begin_a = list_a_offset >> T_offset;
+        int o_end_a = (list_a_offset + list_a_len + T - 1) >> T_offset;
+        int o_begin_b = list_b_offset >> T_offset;
+        int o_end_b = (list_b_offset + list_b_len + T - 1) >> T_offset;
 
-        loop_a_adj_cpy: for (int i = o_begin_a; i < o_end_a; i++) {
-#pragma HLS pipeline
-            int512 temp_a = column_list_1[i];
-            for (int j = 0; j < T; j++) {
-#pragma HLS unroll
-                list_a[i - o_begin_a][j] = temp_a.data[j];
+        if (previous_a_offset != list_a_offset) {
+            loop_a_adj_cpy: for (int i = o_begin_a; i < o_end_a; i++) {
+    #pragma HLS pipeline
+                int512 temp_a = column_list_1[i];
+                for (int j = 0; j < T; j++) {
+    #pragma HLS unroll
+                    list_a[i - o_begin_a][j] = temp_a.data[j];
+                }
             }
         }
+
 
         loop_b_adj_cpy: for (int i = o_begin_b; i < o_end_b; i++) {
 #pragma HLS pipeline
@@ -137,10 +142,10 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
         loop_set_inetrsection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len + o_idx_b))
         {
 #pragma HLS pipeline ii=1
-            int a_dim_1 = idx_a / T;
+            int a_dim_1 = idx_a >> T_offset;
             int a_dim_2 = idx_a & 0xf;
 
-            int b_dim_1 = idx_b / T;
+            int b_dim_1 = idx_b >> T_offset;
             int b_dim_2 = idx_b & 0xf;
 
             int value_a = list_a[a_dim_1][a_dim_2];
@@ -157,6 +162,7 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
             }
         }
         triangle_count += count;
+        previous_a_offset = list_a_offset;
     }
     count[0] = triangle_count;
 }
