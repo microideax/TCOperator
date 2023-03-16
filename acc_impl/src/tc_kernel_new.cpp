@@ -171,18 +171,18 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
 extern "C" {
 void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
 
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
     64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem0 port = edge_list
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
     64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem1 port = offset_list_1
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
     64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem2 port = offset_list_2
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
     64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem3 port = column_list_1
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
     64 max_write_burst_length = 2 max_read_burst_length = 64 bundle = gmem4 port = column_list_2
-#pragma HLS INTERFACE m_axi offset = slave latency = 64 num_write_outstanding = 32 num_read_outstanding = \
-    16 max_write_burst_length = 2 max_read_burst_length = 2  bundle = gmem5 port = tc_number
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 num_read_outstanding = \
+    1 max_write_burst_length = 2 max_read_burst_length = 2  bundle = gmem5 port = tc_number
 
 #pragma HLS INTERFACE s_axilite port = edge_list bundle = control
 #pragma HLS INTERFACE s_axilite port = offset_list_1 bundle = control
