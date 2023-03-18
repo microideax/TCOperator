@@ -9,6 +9,7 @@ typedef struct v_datatype {int data[16];} int512;
 #define T           16
 #define T_offset    4
 #define BURST_LEN   8
+#define MAX_colase  64
 const int c_size = BUF_DEPTH;
 // use 512 bit width to full utilize bandwidth
 
@@ -66,28 +67,114 @@ void loadEdgelist(int length, DT* inArr, hls::stream<DT>& inStrm) {
 }
 
 template <typename DT>
-void loadOffset(int* offset_list_1, int* offset_list_2, int length,
-                hls::stream<DT>& edgestrm, hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
+void loadOffset(int* offset_list_1, int* offset_list_2, int length, \
+                hls::stream<DT>& edgestrm_in, hls::stream<DT>& edgestrm_out, \
+                hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, \
                 hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm){
     for(int i = 0; i < length; i++) {
-        int a_offset = edgestrm.read();
-        int b_offset = edgestrm.read();
-        int a_idx = offset_list_1[a_offset];
-        int b_idx = offset_list_2[b_offset];
-        int len_a = offset_list_1[a_offset +1] - a_idx;
-        int len_b = offset_list_2[b_offset +1] - b_idx;
+        int a_value = edgestrm_in.read();
+        int b_value = edgestrm_in.read();
+        int a_idx = offset_list_1[a_value];
+        int b_idx = offset_list_2[b_value];
+        int len_a = offset_list_1[a_value +1] - a_idx;
+        int len_b = offset_list_2[b_value +1] - b_idx;
         a_idx_strm << a_idx;
         b_idx_strm << b_idx;
         len_a_strm << len_a;
         len_b_strm << len_b;
+        edgestrm_out << b_value;
     }
 }
 
 template <typename DT>
-void procIntersec(int512* column_list_1, int512* column_list_2, int length,
-                 hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, 
-                 hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,
-                 int* count){
+void colase_request (int edge_num, hls::stream<DT>& edge_strm, \
+                        hls::stream<DT>& a_idx_strm, hls::stream<DT>& b_idx_strm, \
+                        hls::stream<DT>& len_a_strm, hls::stream<DT>& len_b_strm,\ 
+                        hls::stream<DT>& a_colase_idx_strm, hls::stream<DT>& a_colase_len_strm, \
+                        hls::stream<DT>& b_colase_idx_strm, hls::stream<DT>& b_colase_len_strm, \
+                        hls::stream<bool>& a_colase_strm, hls::stream<bool>& b_colase_strm, hls::stream<bool>& end_stream) {
+    int a_idx_buffer = -1;
+    int a_len_buffer = -1;
+    int b_idx_buffer = -1; // only store the first idx offset
+    int b_len_buffer[MAX_colase];
+#pragma HLS array_partition variable=b_len_buffer type=complete
+    int b_valid_idx = 0;
+    int b_total_len = 0;
+    bool colase_write = false;
+    int b_current_value = -2;
+    for (int i = 0; i < edge_num; i++) {
+        int b_value = edge_strm.read();
+        int a_idx = a_idx_strm.read();
+        int b_idx = b_idx_strm.read();
+        int a_len = len_a_strm.read();
+        int b_len = len_b_strm.read();
+
+        if ((a_idx != a_idx_buffer) || (b_valid_idx >= MAX_colase) || ((b_total_len + b_len) >= BUF_DEPTH * T)) {
+            colase_write = true;
+        }
+
+        if (b_valid_idx > 0) {
+            if (b_current_value != (b_value - 1)) {
+                colase_write = true;
+            }
+        }
+
+        if ((colase_write)&&(a_idx_buffer != -1)) { // remove initial case
+            a_colase_idx_strm << a_idx_buffer;
+            a_colase_len_strm << a_len_buffer;
+            b_colase_idx_strm << b_idx_buffer;
+            b_colase_len_strm << b_total_len;
+            a_colase_strm << true;
+            b_colase_strm << true;
+            end_stream << false;
+            for (int j = 0; j <= b_valid_idx - 1; j++ ) {
+                b_colase_idx_strm << b_idx_buffer;
+                b_colase_len_strm << b_len_buffer[j];
+                a_colase_strm << false;
+                b_colase_strm << false;
+                end_stream << false;
+                b_idx_buffer += b_len_buffer[j];
+            }
+            b_valid_idx = 0;
+            b_total_len = 0;
+        }
+
+        a_idx_buffer = a_idx;
+        a_len_buffer = a_len;
+        b_idx_buffer = (b_valid_idx == 0)? b_idx : b_idx_buffer;
+        b_len_buffer[b_valid_idx] = b_len;
+        b_total_len += b_len;
+        b_valid_idx += 1;
+        b_current_value = b_value;
+
+        colase_write = false;
+    }
+    // last edge, need write
+    a_colase_idx_strm << a_idx_buffer;
+    a_colase_len_strm << a_len_buffer;
+    b_colase_idx_strm << b_idx_buffer;
+    b_colase_len_strm << b_total_len;
+    a_colase_strm << true;
+    b_colase_strm << true;
+    end_stream << false;
+    for (int j = 0; j <= b_valid_idx - 1; j++ ) {
+        b_colase_idx_strm << b_idx_buffer;
+        b_colase_len_strm << b_len_buffer[j];
+        a_colase_strm << false;
+        b_colase_strm << false;
+        end_stream << false;
+        b_idx_buffer += b_len_buffer[j];
+    }
+
+    end_stream << true;
+}
+
+template <typename DT>
+void procIntersec (int512* column_list_1, int512* column_list_2, int length, int* tri_count,
+                    hls::stream<DT>& a_colase_idx_strm, hls::stream<DT>& a_colase_len_strm, \
+                    hls::stream<DT>& b_colase_idx_strm, hls::stream<DT>& b_colase_len_strm, \
+                    hls::stream<bool>& a_colase_strm, hls::stream<bool>& b_colase_strm, \
+                    hls::stream<bool>& end_stream) {
     
     // int temp_count[1] = {0};
     int triangle_count = 0;
@@ -96,75 +183,86 @@ void procIntersec(int512* column_list_1, int512* column_list_2, int length,
 #pragma HLS array_partition variable=list_a type=complete dim=2
 #pragma HLS array_partition variable=list_b type=complete dim=2
 
-    int previous_a_offset = -1;
+    int list_a_len;
+    int list_a_offset;
+    int list_b_len;
+    int list_b_offset;
 
-    for(int i = 0; i < length; i++) {
+    bool end_flag = end_stream.read();
+    while (!end_flag) {
+        bool a_colase = a_colase_strm.read();
+        bool b_colase = b_colase_strm.read();
 
-        int list_a_offset = a_idx_strm.read();
-        int list_a_len = len_a_strm.read();
-        int list_b_offset = b_idx_strm.read();
-        int list_b_len = len_b_strm.read();
+        if (a_colase && b_colase) {
+#pragma HLS dataflow
+            // adj list cpy.
+            list_a_len = a_colase_len_strm.read();
+            list_a_offset = a_colase_idx_strm.read();
+            list_b_len = b_colase_len_strm.read();
+            list_b_offset = b_colase_idx_strm.read();
 
-        // adjListCpy(list_a, column_list_1, list_a_offset, list_a_len);
-        // adjListCpy(list_b, column_list_2, list_b_offset, list_b_len);
+            int o_begin_a = list_a_offset >> T_offset;
+            int o_end_a = (list_a_offset + list_a_len + T - 1) >> T_offset;
+            int o_begin_b = list_b_offset >> T_offset;
+            int o_end_b = (list_b_offset + list_b_len + T - 1) >> T_offset;
 
-        int o_begin_a = list_a_offset >> T_offset;
-        int o_end_a = (list_a_offset + list_a_len + T - 1) >> T_offset;
-        int o_begin_b = list_b_offset >> T_offset;
-        int o_end_b = (list_b_offset + list_b_len + T - 1) >> T_offset;
-
-        if (previous_a_offset != list_a_offset) {
             loop_a_adj_cpy: for (int i = o_begin_a; i < o_end_a; i++) {
-    #pragma HLS pipeline
+#pragma HLS pipeline
                 int512 temp_a = column_list_1[i];
                 for (int j = 0; j < T; j++) {
-    #pragma HLS unroll
+#pragma HLS unroll
                     list_a[i - o_begin_a][j] = temp_a.data[j];
+                }
+            }
+
+            loop_b_adj_cpy: for (int i = o_begin_b; i < o_end_b; i++) {
+#pragma HLS pipeline
+                int512 temp_b = column_list_2[i];
+                for (int j = 0; j < T; j++) {
+#pragma HLS unroll
+                    list_b[i - o_begin_b][j] = temp_b.data[j];
                 }
             }
         }
 
+        if ((!a_colase) && (!b_colase)) {
 
-        loop_b_adj_cpy: for (int i = o_begin_b; i < o_end_b; i++) {
-#pragma HLS pipeline
-            int512 temp_b = column_list_2[i];
-            for (int j = 0; j < T; j++) {
-#pragma HLS unroll
-                list_b[i - o_begin_b][j] = temp_b.data[j];
+            int list_b_len_t = b_colase_len_strm.read();
+            int list_b_offset_t = b_colase_idx_strm.read();
+
+            int count = 0;
+            int o_idx_a = list_a_offset & 0xf;
+            int o_idx_b = (list_b_offset & 0xf) + (list_b_offset_t - list_b_offset);
+            int idx_a = o_idx_a;
+            int idx_b = o_idx_b;
+            loop_set_inetrsection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len_t + o_idx_b))
+            {
+    #pragma HLS pipeline ii=1
+                int a_dim_1 = idx_a >> T_offset;
+                int a_dim_2 = idx_a & 0xf;
+
+                int b_dim_1 = idx_b >> T_offset;
+                int b_dim_2 = idx_b & 0xf;
+
+                int value_a = list_a[a_dim_1][a_dim_2];
+                int value_b = list_b[b_dim_1][b_dim_2];
+
+                if(value_a < value_b)
+                    idx_a++;
+                else if (value_a > value_b)
+                    idx_b++;
+                else {
+                    count++;
+                    idx_a++;
+                    idx_b++;
+                }
             }
+            triangle_count += count;
         }
 
-        // setIntersection(list_a, list_b, list_a_len, list_b_len, temp_count);
-        int count = 0;
-        int o_idx_a = list_a_offset & 0xf;
-        int o_idx_b = list_b_offset & 0xf;
-        int idx_a = o_idx_a, idx_b = o_idx_b;
-        loop_set_inetrsection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len + o_idx_b))
-        {
-#pragma HLS pipeline ii=1
-            int a_dim_1 = idx_a >> T_offset;
-            int a_dim_2 = idx_a & 0xf;
-
-            int b_dim_1 = idx_b >> T_offset;
-            int b_dim_2 = idx_b & 0xf;
-
-            int value_a = list_a[a_dim_1][a_dim_2];
-            int value_b = list_b[b_dim_1][b_dim_2];
-
-            if(value_a < value_b)
-                idx_a++;
-            else if (value_a > value_b)
-                idx_b++;
-            else {
-                count++;
-                idx_a++;
-                idx_b++;
-            }
-        }
-        triangle_count += count;
-        previous_a_offset = list_a_offset;
+        end_flag = end_stream.read();
     }
-    count[0] = triangle_count;
+    tri_count[0] = triangle_count;
 }
 
 
@@ -202,25 +300,43 @@ void TriangleCount(int* edge_list, int* offset_list_1, int* offset_list_2, int51
     int edge_num_local = edge_num*2;
 
     static hls::stream<int> edgeInStrm("input_edge");
-#pragma HLS STREAM variable = edgeInStrm depth=32
+#pragma HLS STREAM variable = edgeInStrm depth=128
+    static hls::stream<int> edgeOutStrm;
+#pragma HLS STREAM variable = edgeOutStrm depth=64
     static hls::stream<int> a_idx_strm, b_idx_strm;
-#pragma HLS STREAM variable = a_idx_strm depth=16
-#pragma HLS STREAM variable = b_idx_strm depth=16
-    static hls::stream<int> a_idx_strm_o, b_idx_strm_o;
-#pragma HLS STREAM variable = a_idx_strm_o depth=16
-#pragma HLS STREAM variable = b_idx_strm_o depth=16
+#pragma HLS STREAM variable = a_idx_strm depth=64
+#pragma HLS STREAM variable = b_idx_strm depth=64
+//     static hls::stream<int> a_idx_strm_o, b_idx_strm_o;
+// #pragma HLS STREAM variable = a_idx_strm_o depth=16
+// #pragma HLS STREAM variable = b_idx_strm_o depth=16
     static hls::stream<int> len_a_strm, len_b_strm;
-#pragma HLS STREAM variable = len_a_strm depth=16
-#pragma HLS STREAM variable = len_b_strm depth=16
-    static hls::stream<int> len_a_strm_o, len_b_strm_o;
-#pragma HLS STREAM variable = len_a_strm_o depth=16
-#pragma HLS STREAM variable = len_b_strm_o depth=16
+#pragma HLS STREAM variable = len_a_strm depth=64
+#pragma HLS STREAM variable = len_b_strm depth=64
+//     static hls::stream<int> len_a_strm_o, len_b_strm_o;
+// #pragma HLS STREAM variable = len_a_strm_o depth=16
+// #pragma HLS STREAM variable = len_b_strm_o depth=16
+    static hls::stream<int> a_colase_idx_strm, b_colase_idx_strm;
+#pragma HLS STREAM variable = a_colase_idx_strm depth=64
+#pragma HLS STREAM variable = b_colase_idx_strm depth=64
+    static hls::stream<int> a_colase_len_strm, b_colase_len_strm;
+#pragma HLS STREAM variable = a_colase_len_strm depth=64
+#pragma HLS STREAM variable = b_colase_len_strm depth=64
+    static hls::stream<bool> a_colase_strm, b_colase_strm;
+#pragma HLS STREAM variable = a_colase_strm depth=64
+#pragma HLS STREAM variable = b_colase_strm depth=64
+    static hls::stream<bool> end_stream;
+#pragma HLS STREAM variable = end_stream depth=64
 
     int triCount[1]={0};
 
     loadEdgelist<int>(edge_num_local, edge_list, edgeInStrm);
-    loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
-    procIntersec<int>(column_list_1, column_list_2, edge_num, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm, triCount);
+    loadOffset<int>(offset_list_1, offset_list_2, edge_num, edgeInStrm, edgeOutStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm);
+    colase_request<int>(edge_num, edgeOutStrm, a_idx_strm, b_idx_strm, len_a_strm, len_b_strm,\ 
+                        a_colase_idx_strm, a_colase_len_strm, b_colase_idx_strm, b_colase_len_strm, \
+                        a_colase_strm, b_colase_strm, end_stream);
+    procIntersec<int>(column_list_1, column_list_2, edge_num, triCount, \
+                        a_colase_idx_strm, a_colase_len_strm, b_colase_idx_strm, b_colase_len_strm, \
+                        a_colase_strm, b_colase_strm, end_stream);
 
     tc_number[0] = triCount[0];
 
