@@ -10,7 +10,7 @@ typedef struct v_datatype {int data[16];} int512;
 #define T_offset    4
 #define BURST_LEN   8
 #define MAX_colase  16 // at this time , need to align with InSecNum;
-#define InSecNum    16
+#define InSecNum    4
 const int c_size = BUF_DEPTH;
 
 void adjListCpy(int dst[BUF_DEPTH][T], int512* src, int begin, int end) {
@@ -194,22 +194,22 @@ void colase_request (int edge_num, hls::stream<DT>& edge_strm, \
 void proIntSecBina (int list_a[InSecNum][T][BUF_DEPTH], int list_b[InSecNum][T][BUF_DEPTH], \
                     int list_a_offset, int list_a_len, int list_b_offset, int list_b_num,  \
                     int b_idx[MAX_colase], int b_len[MAX_colase], int *count) {
+#pragma HLS inline
     int triangle_count = 0;
     int temp_result[InSecNum] = {0};
+#pragma HLS array_partition variable=temp_result dim=1 type=complete
+
     int loop_num = (list_b_num + InSecNum - 1) / InSecNum;
 
     proIntSec_loop: for (int i = 0; i < loop_num; i++) {
-#pragma HLS dependence variable=list_a type=intra false
-#pragma HLS dependence variable=list_b type=intra false
-#pragma HLS dependence variable=b_idx type=intra false
-#pragma HLS dependence variable=b_len type=intra false
         proIntSec_Num: for (int j = 0; j < InSecNum; j++) {
 #pragma HLS unroll
             temp_result[j] = 0;
             int inner_idx = i*InSecNum + j;
+            int tri_count[1] = {0};
+            setIntersection(list_a[j], list_b[j], list_a_offset, list_a_len, list_b_offset, b_idx[inner_idx], b_len[inner_idx], tri_count);
+            
             if (inner_idx < list_b_num) {
-                int tri_count[1] = {0};
-                setIntersection(list_a[j], list_b[j], list_a_offset, list_a_len, list_b_offset, b_idx[inner_idx], b_len[inner_idx], tri_count);
                 temp_result[j] = tri_count[0];
             }
         }
@@ -274,12 +274,17 @@ void procIntersec (int512* column_list_1, int512* column_list_2, int length, int
 #pragma HLS array_partition variable=b_len type=complete
 #pragma HLS array_partition variable=b_idx type=complete
 
-            for (int i = 0; i < list_b_num; i++) {
-                b_len[i] = b_colase_len_strm.read();
-                b_idx[i] = b_colase_idx_strm.read();
-                a_colase = a_colase_strm.read();
-                b_colase = b_colase_strm.read();
-                end_flag = end_stream.read();
+            for (int i = 0; i < MAX_colase; i++) {
+                if (i < list_b_num) {
+                    b_len[i] = b_colase_len_strm.read();
+                    b_idx[i] = b_colase_idx_strm.read();
+                    a_colase = a_colase_strm.read();
+                    b_colase = b_colase_strm.read();
+                    end_flag = end_stream.read();
+                } else {
+                    b_len[i] = 0;
+                    b_idx[i] = list_b_offset;
+                }
             }
 
             int count[1] = {0};
