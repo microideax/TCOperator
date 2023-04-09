@@ -146,7 +146,82 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
     lengthValueB[0] = length_value;
 }
 
-void setIntersection(int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int list_a_offset, int list_a_len, \
+int msb (unsigned int v) {
+#pragma HLS inline
+	static const int pos[32] = { 0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, \
+                                4, 8, 31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9};
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v |= v >> 16;
+	v = (v >> 1) + 1;
+	return pos[(v* 0x077CB531) >> 27];
+}
+
+int lbitBinarySearch(int list_b[T][BUF_DEPTH], int low, int high, int offset, int key){
+#pragma HLS inline
+    int init = offset & 0xf;
+    int lbit = msb(high);
+
+    int k = high ? 1 << lbit : 0;
+    int idx_k = k + init;
+    int block_k = idx_k >> 4;
+    int bias_k = idx_k & 0xf;
+    int temp_value = list_b[bias_k][block_k];
+
+    int r, idx_r, block_r, bias_r;
+    int i = (temp_value <= key) ? k : 0;
+    int idx_i, block_i, bias_i;
+    while ((k >>= 1)) {
+#pragma HLS pipeline ii=1
+        r = i + k;
+        idx_r = r + init;
+        block_r = idx_r >> 4;
+        bias_r = idx_r & 0xf;
+        temp_value = list_b[bias_r][block_r];
+
+        if ((r <= high) && (key > temp_value)) {
+            i = r;
+        } else if ((r <= high) && (key == temp_value)) {
+            return r;
+        }
+    }
+
+    idx_i = i + init;
+    block_i = idx_i >> 4;
+    bias_i = idx_i & 0xf;
+    temp_value = list_b[bias_i][block_i];
+    if (temp_value == key) {
+        return i;
+    } else {
+        return -1;
+    }
+}
+
+void setIntersectionBiSearch(int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int list_a_offset, int list_a_len, \
+                     int list_b_offset, int list_b_len, int* tc_count) 
+{
+#pragma HLS inline
+/** Need to make sure the list_a is the shorter one **/
+    int count = 0;
+    int temp_idx_0 = 0;
+    // list_a has to be the shorter one, search with element from shorter array
+    setBiSearch: for (int i = 0; i < list_a_len; i++) {
+        int ini_idx_a = list_a_offset & 0xf;
+        int idx = ini_idx_a + i;
+        int a_dim_1 = idx >> 4;
+        int a_dim_2 = idx & 0xf;
+        int a_value = list_a[a_dim_2][a_dim_1];
+        temp_idx_0 = lbitBinarySearch(list_b, 0, list_b_len-1, list_b_offset, a_value);
+        if (temp_idx_0 != -1) {
+            count++;
+        }
+    }
+    tc_count[0] = count;
+}
+
+void setIntersectionMerge(int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int list_a_offset, int list_a_len, \
                      int list_b_offset, int list_b_len, int* tc_count)
 {
 #pragma HLS inline
@@ -178,6 +253,18 @@ loop_set_insection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len
         }
     }
     tc_count[0] = count;
+}
+
+void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int list_a_offset, int list_a_len, \
+                     int list_b_offset, int list_b_len, int* tc_num) {
+#pragma HLS inline off
+    if (list_b_len >= (list_a_len << 5)) {
+        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    } else if (list_a_len >= (list_b_len << 5)) {
+        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
+    } else {
+        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    }
 }
 
 void processList(int list_a[T_2][T][BUF_DEPTH], int list_b[T_2][T][BUF_DEPTH], 
