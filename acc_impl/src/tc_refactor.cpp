@@ -270,7 +270,7 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
 void processList(int list_a[T_2][T][BUF_DEPTH], int list_b[T_2][T][BUF_DEPTH], 
                  int256 offsetValueA[1], int256 offsetValueB[1],
                  int256 lengthValueA[1], int256 lengthValueB[1], int* tc_count) {
-#pragma HLS inline
+#pragma HLS inline off
     int tri_count = 0;
 
     int256 offset_value_a = offsetValueA[0];
@@ -413,12 +413,17 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int pp = 0; // ping-pong operation
     int TC_ping = 0;
     int TC_pong = 0;
+    int512 edge_strm_value;
+    int256 offset_strm_a;
+    int256 offset_strm_b;
+    int256 length_strm_a;
+    int256 length_strm_b;
     pp_load_cpy_process: for (int i = 0; i <= loop; i++) {
-        int512 edge_strm_value = edgeStrmOut.read();
-        int256 offset_strm_a = offsetStrm_A.read();
-        int256 offset_strm_b = offsetStrm_B.read();
-        int256 length_strm_a = lengthStrm_A.read();
-        int256 length_strm_b = lengthStrm_B.read();
+        edge_strm_value = edgeStrmOut.read();
+        offset_strm_a = offsetStrm_A.read();
+        offset_strm_b = offsetStrm_B.read();
+        length_strm_a = lengthStrm_A.read();
+        length_strm_b = lengthStrm_B.read();
 
         if (pp) {
             processList (list_a_ping, list_b_ping, offset_a_ping, offset_b_ping, length_a_ping, length_b_ping, triCount_pong);
