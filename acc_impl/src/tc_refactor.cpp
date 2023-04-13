@@ -70,9 +70,9 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 
 void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1, 
                     int256 offsetStrmA_value, int256 lengthStrmA_value, 
-                    int list_a_cache[1][T][BUF_DEPTH], int list_a_tag[2], 
-                    int list_a[T_2][T][BUF_DEPTH], int256 offsetValueA[1], 
-                    int256 lengthValueA[1],
+                    int list_a_cache[1][T][BUF_DEPTH], int list_a_cache_tag[2], 
+                    int list_a[T_2][T][BUF_DEPTH], int list_a_tag[T_2],
+                    int256 offsetValueA[1], int256 lengthValueA[1],
                     int* load_counter, int* cpy_counter) {
 
     int load_counter_local = 0;
@@ -89,16 +89,22 @@ void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1,
     offset_value = offsetStrmA_value;
     length_value = lengthStrmA_value;
 
-    int list_tag = 0;
+    int list_cache_tag = -1;
     int len_reg = 0;
+    int list_tag = -1;
 
     load_copy_list_a_T_2: for (int j = 0; j < T_2; j++) {
-    list_tag = list_a_tag[0];
-    len_reg = list_a_tag[1];
-    if (edge_value.data[2*j] == list_tag) { // list_a_tag[0]: value
+    list_cache_tag = list_a_cache_tag[0];
+    len_reg = list_a_cache_tag[1];
+    list_tag = list_a_tag[j];
+    if (edge_value.data[2*j] == list_tag) {
+        // hit, no need to copy data
+        continue;
+    } else if (edge_value.data[2*j] == list_cache_tag) { // list_a_cache_tag[0]: value
         // hit, copy data from list_a cache
-        std::cout << "Copy list a: " << list_tag << std::endl;
+        std::cout << "Copy list a: " << list_cache_tag << std::endl;
         cpy_counter_local++;
+        list_a_tag[j] = list_cache_tag;
         copy_list_a: for (int ii = 0; ii < len_reg; ii++) { // list_a_tag[1]: length
 #pragma HLS pipeline
             for (int jj = 0; jj < T; jj++) {
@@ -121,8 +127,9 @@ void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1,
                 list_a_cache[0][jj][ii - o_begin_a] = list_a_temp.data[jj];
             }
         }
-        list_a_tag[0] = edge_value.data[2*j];
-        list_a_tag[1] = o_end_a - o_begin_a;
+        list_a_cache_tag[0] = edge_value.data[2*j];
+        list_a_cache_tag[1] = o_end_a - o_begin_a;
+        list_a_tag[j] = edge_value.data[2*j];
         }
     }
 
@@ -415,18 +422,28 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS array_partition variable=list_a_cache type=complete dim=1
 #pragma HLS array_partition variable=list_a_cache type=complete dim=2
 
-    int list_a_tag[2];
-#pragma HLS array_partition variable=list_a_tag type=complete dim=1
+    int list_a_cache_tag[2];
+#pragma HLS array_partition variable=list_a_cache_tag type=complete dim=1
 
-    list_a_tag[0] = -1; // invalid data in cache
-    list_a_tag[1] = 0; // valid data length
+    list_a_cache_tag[0] = -1; // invalid data in cache
+    list_a_cache_tag[1] = 0; // valid data length
+
+    int list_a_pong_tag[T_2]; // indicate list_a value, if hit, no need to copy.
+    int list_a_ping_tag[T_2];
+#pragma HLS array_partition variable=list_a_pong_tag type=complete dim=1
+#pragma HLS array_partition variable=list_a_ping_tag type=complete dim=1
+    for (int i = 0; i < T_2; i++) {
+        list_a_pong_tag[i] = -1;
+        list_a_ping_tag[i] = -1;
+    }
 
     int triCount_ping[1]={0};
     int triCount_pong[1]={0};
     int length = edge_num*2;
 
     loadEdgeList(length, edge_list, edgeStrm);
-    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, edgeStrmOut, offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B);
+    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, edgeStrmOut, \
+                offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B);
 
     int loop = (length + T - 1) /T;
     int pp = 0; // ping-pong operation
@@ -456,15 +473,21 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         length_strm_b = lengthStrm_B.read();
 
         if (pp) {
-            processList (list_a_ping, list_b_ping, offset_a_ping, offset_b_ping, length_a_ping, length_b_ping, triCount_pong);
-            loadCpyListA (edge_strm_value, column_list_1, offset_strm_a, length_strm_a, list_a_cache, list_a_tag, list_a_pong, offset_a_pong, length_a_pong, load_counter_pong, cpy_counter_pong);
+            processList (list_a_ping, list_b_ping, offset_a_ping, offset_b_ping, \
+                         length_a_ping, length_b_ping, triCount_pong);
+            loadCpyListA (edge_strm_value, column_list_1, offset_strm_a, length_strm_a, \
+                        list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, \
+                        offset_a_pong, length_a_pong, load_counter_pong, cpy_counter_pong);
             loadListB (offset_strm_b, length_strm_b, column_list_2, list_b_pong, offset_b_pong, length_b_pong);
             TC_pong += triCount_pong[0];
             load_a_pong += load_counter_pong[0];
             copy_a_pong += cpy_counter_pong[0];
         } else {
-            processList (list_a_pong, list_b_pong, offset_a_pong, offset_b_pong, length_a_pong, length_b_pong, triCount_ping);
-            loadCpyListA (edge_strm_value, column_list_1, offset_strm_a, length_strm_a, list_a_cache, list_a_tag, list_a_ping, offset_a_ping, length_a_ping, load_counter_ping, cpy_counter_ping);
+            processList (list_a_pong, list_b_pong, offset_a_pong, offset_b_pong, \
+                         length_a_pong, length_b_pong, triCount_ping);
+            loadCpyListA (edge_strm_value, column_list_1, offset_strm_a, length_strm_a, \
+                        list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, \
+                        offset_a_ping, length_a_ping, load_counter_ping, cpy_counter_ping);
             loadListB (offset_strm_b, length_strm_b, column_list_2, list_b_ping, offset_b_ping, length_b_ping);
             TC_ping += triCount_ping[0];
             load_a_ping += load_counter_ping[0];
