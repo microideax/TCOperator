@@ -11,6 +11,7 @@ typedef struct data_256bit_type {int data[8];} int256;
 #define T           16
 #define T_offset    4
 #define T_2         8
+#define len_coale   512
 
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     int loop = (length + T - 1) / T;
@@ -102,7 +103,7 @@ void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1,
         continue;
     } else if (edge_value.data[2*j] == list_cache_tag) { // list_a_cache_tag[0]: value
         // hit, copy data from list_a cache
-        std::cout << "Copy list a: " << list_cache_tag << std::endl;
+        // std::cout << "Copy list a: " << list_cache_tag << std::endl;
         cpy_counter_local++;
         list_a_tag[j] = list_cache_tag;
         copy_list_a: for (int ii = 0; ii < len_reg; ii++) { // list_a_tag[1]: length
@@ -117,7 +118,7 @@ void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1,
         load_counter_local++;
         int o_begin_a = offset_value.data[j] >> T_offset;
         int o_end_a = (offset_value.data[j] + length_value.data[j] + T - 1) >> T_offset;
-        std::cout << "Load list a: " << offset_value.data[j] << std::endl;
+        // std::cout << "Load list a: " << offset_value.data[j] << std::endl;
         load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
 #pragma HLS pipeline
             int512 list_a_temp = column_list_1[ii];
@@ -140,7 +141,7 @@ void loadCpyListA ( int512 edgeStrmIn_value, int512* column_list_1,
 }
 
 void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* column_list_2,
-                int list_b[T][T][BUF_DEPTH], int256 offsetValueB[1], int256 lengthValueB[1]) {
+                int list_b[T_2][T][BUF_DEPTH], int256 offsetValueB[1], int256 lengthValueB[1]) {
 
     int256 offset_value;
     int256 length_value;
@@ -150,17 +151,83 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
     offset_value = offsetStrmB_value;
     length_value = lengthStrmB_value;
 
+    int item_num = 0;
+    int coalesce_index[T_2];
+    int temp_offset;
+    bool coalesce_flag;
+
+    int list_buffer[T][BUF_DEPTH];
+#pragma HLS array_partition variable=list_buffer type=complete dim=1
+
     // load list_b
     load_list_b_T_2: for (int j = 0; j < T_2; j++) {
-        // TODO: add coalesce
-        int o_begin_b = offset_value.data[j] >> T_offset;
-        int o_end_b = (offset_value.data[j] + length_value.data[j] + T - 1) >> T_offset;
-        load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
+
+        coalesce_index[item_num] = j;
+
+        if (j == T_2 - 1) {
+            coalesce_flag = false;
+        } else {
+            temp_offset = offset_value.data[j] + length_value.data[j];
+            coalesce_flag = (temp_offset == offset_value.data[j+1])? true: false;
+        }
+
+        if (coalesce_flag) {
+            // add to coalesce list
+            // std::cout << "coalesce " << j << std::endl;
+            item_num = item_num + 1;
+            continue;
+        } else {
+            // load data (coalesce load + copy to list_b)
+            // std::cout << "coalesce load " << j << " item num = " << item_num << std::endl;
+            int start_pos = offset_value.data[coalesce_index[0]];
+            int end_pos = offset_value.data[coalesce_index[item_num]] + length_value.data[coalesce_index[item_num]];
+            int o_begin_b = start_pos >> T_offset;
+            int o_end_b = (end_pos + T - 1) >> T_offset;
+            // std::cout << " " << start_pos << " " << end_pos << " " << o_begin_b << " " << o_end_b << std::endl;
+
+            if (start_pos == end_pos) {
+                // empty list, no need to load
+                item_num = 0;
+                continue;
+            }
+
+            int item_index = coalesce_index[0];
+            if (item_num == 0) {
+                // no need to use buffer
+                load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
 #pragma HLS pipeline
-            int512 list_b_temp = column_list_2[ii];
-            for (int jj = 0; jj < T; jj++) {
+                    int512 list_b_temp = column_list_2[ii];
+                    for (int jj = 0; jj < T; jj++) {
 #pragma HLS unroll
-                list_b[j][jj][ii - o_begin_b] = list_b_temp.data[jj];
+                        list_b[item_index][jj][ii - o_begin_b] = list_b_temp.data[jj];
+                    }
+                }
+            } else {
+                // load data to buffer, then copy buffer data to each list_b;
+                load_list_buffer: for (int ii = o_begin_b; ii < o_end_b; ii++) {
+#pragma HLS pipeline
+                    int512 list_b_temp = column_list_2[ii];
+                    for (int jj = 0; jj < T; jj++) {
+#pragma HLS unroll
+                        list_buffer[jj][ii - o_begin_b] = list_b_temp.data[jj];
+                    }
+                }
+
+                copy_buffer_to_list_b: for (int k = 0; k <= item_num; k++) {
+                // copy buffer data to list_b
+                    int item_start_pos = (offset_value.data[coalesce_index[k]] >> T_offset) - o_begin_b;
+                    int item_end_pos = ((offset_value.data[coalesce_index[k]] + length_value.data[coalesce_index[k]] + T - 1) >> T_offset) - o_begin_b;
+                    item_index = coalesce_index[k];
+                    // std::cout << "copy to list_b " << item_start_pos << " " << item_end_pos << " " << item_index << std::endl;
+                    for (int it = item_start_pos; it < item_end_pos; it++) {
+#pragma HLS pipeline
+                        for (int jj = 0; jj < T; jj++) {
+#pragma HLS unroll
+                            list_b[item_index][jj][it - item_start_pos] = list_buffer[jj][it];
+                        }
+                    }
+                }
+                item_num = 0; // clean the item index
             }
         }
     }
