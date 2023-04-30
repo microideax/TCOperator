@@ -23,7 +23,7 @@ void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
 }
 
 void loadOffset(int length, int* offset_list_1, int* offset_list_2, 
-                hls::stream<int512>& eStrmIn, hls::stream<int512>& outEdgeStrm,
+                hls::stream<int512>& eStrmIn,
                 hls::stream<int256>& offsetStrmA, hls::stream<int256>& offsetStrmB, 
                 hls::stream<int256>& lengthStrmA, hls::stream<int256>& lengthStrmB ) {
     int loop = (length + T - 1) / T;
@@ -39,7 +39,6 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 #pragma HLS array_partition variable=length_value_b type=complete dim=1
 #pragma HLS array_partition variable=offset_value_b type=complete dim=1
         for (int j = 0; j < T_2; j++) {
-#pragma HLS pipeline //This pipeline pragma seems unnecessary, consider to remove
             if (i*T + 2*j < length) {
                 int a_value = edge_value.data[j*2];
                 int a_offset = offset_list_1[a_value];
@@ -65,45 +64,30 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
         lengthStrmA << length_value_a;
         offsetStrmB << offset_value_b;
         lengthStrmB << length_value_b;
-        outEdgeStrm << edge_value;
     }
 }
 
-void preProcess (int length, hls::stream<int512>& edgeInput,
-                 hls::stream<int256>& offsetInStrmA, hls::stream<int256>& offsetInStrmB,
-                 hls::stream<int256>& lengthInStrmA, hls::stream<int256>& lengthInStrmB,
-                 hls::stream<int256>& offsetOutStrmA, hls::stream<int256>& offsetOutStrmB,
-                 hls::stream<int256>& lengthOutStrmA, hls::stream<int256>& lengthOutStrmB,
-                 hls::stream<int256>& flagStrmA, hls::stream<int256>& flagStrmB) {
+void preProcessListA (int length,
+                    hls::stream<int256>& offsetInStrmA, hls::stream<int256>& lengthInStrmA, 
+                    hls::stream<int256>& offsetOutStrmA, hls::stream<int256>& lengthOutStrmA, 
+                    hls::stream<int256>& flagStrmA) {
     // preProcess Stage:
     // For list A -> hit miss check and filter len = 1;
     // For list B -> coalescing and filter len = 1;
     // define List A flags: 0 -> no load, 1 -> copy, 2 -> load.
     // define List B flags: 0 -> no load, 1 -> coalescing, 2 -> coalescing end, 3 -> load.
 
-    int512 edge_value;
-#pragma HLS array_partition variable=edge_value type=complete dim=1
-    int256 length_a, offset_a, length_b, offset_b;
+    int256 length_a, offset_a, flag_list_a;
 #pragma HLS array_partition variable=length_a type=complete dim=1
 #pragma HLS array_partition variable=offset_a type=complete dim=1
-#pragma HLS array_partition variable=length_b type=complete dim=1
-#pragma HLS array_partition variable=offset_b type=complete dim=1
-    int256 flag_list_a, flag_list_b;
 #pragma HLS array_partition variable=flag_list_a type=complete dim=1
-#pragma HLS array_partition variable=flag_list_b type=complete dim=1
 
     // one unified cache for list a ping pong buffer.
-    int list_a_cache_tag = -1; // value
+    int list_a_cache_tag = -1; // store offset
     // ping and pong tag for separate ping and pong buffer. 0 for pong, 1 for ping.
     int list_a_tag[2][T_2];
 #pragma HLS array_partition variable=list_a_tag type=complete dim=1
 #pragma HLS array_partition variable=list_a_tag type=complete dim=2
-
-    // list b coalescing item and index array
-    int item_num = 0;
-    int coalesce_index[T_2];
-    int temp_offset = -1;
-    int temp_length = 0;
 
     for (int i = 0; i < 2; i++) {
 #pragma HLS unroll
@@ -111,80 +95,102 @@ void preProcess (int length, hls::stream<int512>& edgeInput,
 #pragma HLS unroll
             // initial
             list_a_tag[i][j] = -1;
-            coalesce_index[j] = -1;
         }
     }
 
     int loop = (length + T - 1) / T;
     int pp = 0;
-    bool ignore = false; // when len_a < 2, ignore = true;
 
     for (int i = 0; i <= loop; i++) {
-        edge_value = edgeInput.read();
         length_a = lengthInStrmA.read();
         offset_a = offsetInStrmA.read();
-        length_b = lengthInStrmB.read();
-        offset_b = offsetInStrmB.read();
 
-        for (int j = 0; j < T_2; j++) {
-#pragma HLS pipeline
-            // preprocess for list a:
-            // if (length_a.data[j] == 1) {
-            //     // list a length = 1, do not need TC.
-            //     ignore = true; // should be true
-            //     flag_list_a.data[j] = 0;
-            // } else 
-            
-            if (edge_value.data[j*2] == list_a_tag[pp][j]) {
+        preprocess_list_a: for (int j = 0; j < T_2; j++) {
+#pragma HLS unroll
+            if (offset_a.data[j] == list_a_tag[pp][j]) {
                 // no need to copy or load
                 flag_list_a.data[j] = 0;
-            } else if (edge_value.data[j*2] == list_a_cache_tag) {
+            } else if (offset_a.data[j] == list_a_cache_tag) {
                 // data in cache, hit, need copy
-                list_a_tag[pp][j] = edge_value.data[j*2];
+                list_a_tag[pp][j] = offset_a.data[j];
                 flag_list_a.data[j] = 1;
             } else {
                 // data miss, need load from off-chip memory
-                list_a_tag[pp][j] = edge_value.data[j*2];
-                list_a_cache_tag = edge_value.data[j*2];
+                list_a_tag[pp][j] = offset_a.data[j];
+                list_a_cache_tag = offset_a.data[j];
                 flag_list_a.data[j] = 2;
             }
+        }
+        pp = 1 - pp;
+        offsetOutStrmA << offset_a;
+        lengthOutStrmA << length_a;
+        flagStrmA << flag_list_a;
+    }
+}
 
-            // preprocess for list b
-            flag_list_b.data[j] = 3; // default, load
+void preProcessListB (int length, hls::stream<int256>& offsetInStrmB,
+                hls::stream<int256>& lengthInStrmB, hls::stream<int256>& offsetOutStrmB,
+                hls::stream<int256>& lengthOutStrmB, hls::stream<int256>& flagStrmB) {
+    // preProcess Stage:
+    // For list A -> hit miss check and filter len = 1;
+    // For list B -> coalescing and filter len = 1;
+    // define List A flags: 0 -> no load, 1 -> copy, 2 -> load.
+    // define List B flags: 0 -> no load, 1 -> coalescing, 2 -> coalescing end, 3 -> load.
 
-            if (j < T_2 - 1) {
-                temp_offset = offset_b.data[j] + length_b.data[j] - offset_b.data[j + 1];
-                if ((temp_offset == 0) && 
-                    ((temp_length + length_b.data[j]) < (65536 - 32))) {
-                    // coalescing
+    int256 length_b, offset_b, flag_list_b;
+#pragma HLS array_partition variable=length_b type=complete dim=1
+#pragma HLS array_partition variable=offset_b type=complete dim=1
+#pragma HLS array_partition variable=flag_list_b type=complete dim=1
+ 
+    // list b coalescing item and index array
+    int item_num = 0;
+    int temp_length = 0;
+    int align_arr[T_2];
+    for (int k = 0; k < T_2; k++) {
+#pragma HLS unroll
+        align_arr[k] = 0;
+    }
+
+    int loop = (length + T - 1) / T;
+
+    for (int i = 0; i <= loop; i++) {
+        length_b = lengthInStrmB.read();
+        offset_b = offsetInStrmB.read();
+
+        preprocess_list_b_align: for (int j = 0; j < (T_2 - 1); j++) {
+#pragma HLS unroll
+            int t = offset_b.data[j] + length_b.data[j];
+            if (t == offset_b.data[j + 1]) {
+                align_arr[j] = 1;
+            } else {
+                align_arr[j] = 0;
+            }
+        }
+
+        preprocess_list_b_flag: for (int j = 0; j < T_2; j++) {
+#pragma HLS pipeline
+            if (align_arr[j] == 1) {
+                if ((temp_length + length_b.data[j]) < (65536 - 32)) {
                     item_num += 1;
                     temp_length += length_b.data[j];
                     flag_list_b.data[j] = 1;
-                    continue;
+                } else {
+                    item_num = 0;
+                    temp_length = 0;
+                    flag_list_b.data[j] = 2;
+                }
+            } else {
+                if (item_num > 0) {
+                    item_num = 0;
+                    temp_length = 0;
+                    flag_list_b.data[j] = 2;
+                } else {
+                    flag_list_b.data[j] = 3;
                 }
             }
-
-            // if ((item_num == 0) && (ignore == true)) {
-            //     // no coalescing and ignore == true
-            //     flag_list_b.data[j] = 0; // no load
-            //     ignore = false;
-            //     continue;
-            // }
-
-            if (item_num > 0) {
-                flag_list_b.data[j] = 2; // coalescing end.
-                temp_length = 0;
-                item_num = 0;
-                continue;
-            }
         }
-        item_num = 0;
-        pp = 1 - pp;
-        offsetOutStrmA << offset_a;
         offsetOutStrmB << offset_b;
-        lengthOutStrmA << length_a;
         lengthOutStrmB << length_b;
-        flagStrmA << flag_list_a;
         flagStrmB << flag_list_b;
     }
 }
@@ -520,8 +526,8 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS STREAM variable = lengthStrm_A depth=16
     static hls::stream<int256> lengthStrm_B;
 #pragma HLS STREAM variable = lengthStrm_B depth=16
-    static hls::stream<int512> edgeStrmOut;
-#pragma HLS STREAM variable = edgeStrmOut depth=16
+//     static hls::stream<int512> edgeStrmOut;
+// #pragma HLS STREAM variable = edgeStrmOut
     static hls::stream<int256> offsetOutStrm_A;
 #pragma HLS STREAM variable = offsetOutStrm_A depth=16
     static hls::stream<int256> offsetOutStrm_B;
@@ -587,10 +593,9 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int length = edge_num*2;
 
     loadEdgeList(length, edge_list, edgeStrm);
-    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, edgeStrmOut, \
-                offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B);
-    preProcess(length, edgeStrmOut, offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B,
-                offsetOutStrm_A, offsetOutStrm_B, lengthOutStrm_A, lengthOutStrm_B, flagStrm_A, flagStrm_B);
+    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B);
+    preProcessListA (length, offsetStrm_A, lengthStrm_A, offsetOutStrm_A, lengthOutStrm_A, flagStrm_A);
+    preProcessListB (length, offsetStrm_B, lengthStrm_B, offsetOutStrm_B, lengthOutStrm_B, flagStrm_B);
 
     int loop = (length + T - 1) /T;
     int pp = 0; // ping-pong operation
@@ -600,6 +605,12 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int256 offset_strm_a, offset_strm_b;
     int256 length_strm_a, length_strm_b;
     int256 flag_strm_a, flag_strm_b;
+#pragma HLS array_partition variable=offset_strm_a type=complete dim=1 
+#pragma HLS array_partition variable=offset_strm_b type=complete dim=1 
+#pragma HLS array_partition variable=length_strm_a type=complete dim=1 
+#pragma HLS array_partition variable=length_strm_b type=complete dim=1
+#pragma HLS array_partition variable=flag_strm_a type=complete dim=1 
+#pragma HLS array_partition variable=flag_strm_b type=complete dim=1
 
     pp_load_cpy_process: for (int i = 0; i <= loop; i++) {
         offset_strm_a = offsetOutStrm_A.read();
