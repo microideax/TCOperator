@@ -10,6 +10,16 @@ from multiprocessing import Process, Pool
 import math
 
 
+partition_num = 2 ## can be set a variable, equals to thread numbers.
+## dataset_name = 'as-skitter' ## .txt
+## dataset_name = 'ca-cit-HepPh' ## .edges
+## dataset_name = 'facebook_combined' ## .txt
+## dataset_name = 'amazon0601' ## .mtx
+dataset_name = 'facebook_combined'
+filename = '../datasets/' + dataset_name + '.txt'
+
+print ("TC partition number = ", partition_num)
+
 ## use multi-thread method to implement graph partition, function defination
 def partion_multi_process (data_name, processID, graph_array, index_list, length):
     t_m_p = perf_counter()
@@ -54,12 +64,6 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
     print("intersection finish, time : ", t_inter_e)
     return triangle_count
 
-
-## dataset_name = 'as-skitter' ## .txt
-## dataset_name = 'ca-cit-HepPh' ## .edges
-## dataset_name = 'facebook_combined' ## .txt
-dataset_name = 'amazon0601' ## .mtx
-filename = '../datasets/' + dataset_name + '.txt'
 
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
@@ -127,7 +131,6 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 1 ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):

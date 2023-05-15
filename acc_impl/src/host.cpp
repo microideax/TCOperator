@@ -11,7 +11,7 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_kernel.h"
 
-#define PARTITION_NUM 1
+#define PARTITION_NUM 2
 
 void getTxtSize (std::string file_name, int& lineNum) {
     std::cout << "Getting file size ... " << file_name;
