@@ -13,6 +13,10 @@ typedef struct data_256bit_type {int data[8];} int256;
 #define T_2         8
 #define len_coale   512
 
+int o_begin_pre = 0;
+int o_end_pre = 0;
+float ratio_b = 0;
+
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     int loop = (length + T - 1) / T;
     for (int i = 0; i < loop; i++) {
@@ -97,6 +101,8 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
     ctrlStrm << false; // end stream: the last stream
 }
 
+void loadListAtoCache() {}
+
 void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 lengthStrmA_value, 
                     int list_a_cache[1][T][BUF_DEPTH], int list_a_cache_tag[2], 
                     int list_a[T_2][T][BUF_DEPTH], int list_a_tag[T_2],
@@ -135,6 +141,8 @@ void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 leng
         // miss, load data from off-chip memory and update cache
         int o_begin_a = offset_value.data[j] >> T_offset;
         int o_end_a = (offset_value.data[j] + length_value.data[j] + T - 1) >> T_offset;
+        
+        std::cout << "Loading list a" << std::endl;
         load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
 #pragma HLS pipeline
             int512 list_a_temp = column_list_1[ii];
@@ -154,6 +162,9 @@ void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 leng
     lengthValueA[0] = length_value;
 }
 
+//below is my code to load list B with a address coalescing method
+// please suggest a better way to add in a cache of list B so that we can reduce the off-chip memory access
+// add a cache for list_b variable
 void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* column_list_2,
                 int list_b[T_2][T][BUF_DEPTH], int256 offsetValueB[1], int256 lengthValueB[1]) {
 
@@ -199,12 +210,20 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
 
             int o_begin_b = item_begin[coalesce_index_start];
             int o_end_b = item_end[j];
+            
+            if (o_begin_b <= o_end_pre){
+                std::cout << "list b overlap" << std::endl;
+                ratio_b += (o_end_pre - o_begin_b);
+            }
+            o_begin_pre = o_begin_b;
+            o_end_pre = o_end_b;
+
             coalesce_index_start = j + 1; // should be next item, in next iteration
 
             if (o_begin_b == o_end_b) {
                 continue;
             }
-
+            std::cout << "Loading list b" << std::endl;
             load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
 #pragma HLS pipeline
                 int512 list_b_temp = column_list_2[ii];
@@ -532,5 +551,6 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         }
     }
     tc_number[0] = TC_ping + TC_pong;
+    std::cout << "overlapped ratio" << ratio_b << std::endl;
 }
 }
