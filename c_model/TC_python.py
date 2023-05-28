@@ -15,40 +15,11 @@ partition_num = 2 ## can be set a variable, equals to thread numbers.
 ## dataset_name = 'ca-cit-HepPh' ## .edges
 ## dataset_name = 'facebook_combined' ## .txt
 ## dataset_name = 'amazon0601' ## .mtx
-dataset_name = 'facebook_combined'
+## dataset_name = 'facebook_combined'
+dataset_name = 'as20000102'
+## dataset_name = 'test'
 filename = '../datasets/' + dataset_name + '.txt'
-
 print ("TC partition number = ", partition_num)
-
-## use multi-thread method to implement graph partition, function defination
-def partion_multi_process (data_name, processID, graph_array, index_list, length):
-    t_m_p = perf_counter()
-    csr_row = np.int32(np.zeros(length + 1))
-    csr_col = []
-    temp_list = []
-    for i in range(len(graph_array)):
-        if ((int(graph_array[i][1]) >= index_list[processID]) and (int(graph_array[i][1]) < index_list[processID+1])):
-            ## csr
-            temp_list.append([graph_array[i][0], graph_array[i][1]])
-            csr_row[graph_array[i][0]+1] += 1
-    if (temp_list == []):
-        return [], []
-
-    temp_list = np.array(temp_list)
-    temp_list = temp_list[np.lexsort([temp_list.T[1]])] ## sort array by incremental order
-    temp_list = temp_list[np.lexsort([temp_list.T[0]])] ## sort array by incremental order
-
-    csr_row = np.add.accumulate(csr_row)
-    csr_col = temp_list[:, 1]
-
-    t_m_e = perf_counter() - t_m_p
-    print("partition finish, time : ", t_m_e)
-    
-    np.savetxt("./dataset/" + data_name + "_row_" + str(processID) + ".txt", csr_row, fmt='%d', delimiter=' ')
-    np.savetxt("./dataset/" + data_name + "_col_" + str(processID) + ".txt", csr_col, fmt='%d', delimiter=' ')
-    
-    return csr_row, csr_col
-
 
 ## multi-processors processing
 def intersection_multi_process (processID, graph_array, csr_row, csr_col):
@@ -64,7 +35,7 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
     print("intersection finish, time : ", t_inter_e)
     return triangle_count
 
-
+t_start = perf_counter()
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
 txt_array = txt_array_t[:,:2]
@@ -113,58 +84,38 @@ for i in range (1, txt_array.shape[0]) :
         list_b.append(i)
 ## print(list_a)
 txt_array = np.delete(txt_array, list_b, axis = 0)
-
-# dest_array = txt_array[:, 1]
-# dest_array = np.bincount(dest_array)
-# dest_array = np.add.accumulate(dest_array)
-# ## print (dest_array.shape[0])
-# print (dest_array)
-
-global _shared_array
-_shared_array = txt_array
-np.savetxt("./dataset/" + dataset_name + "_edge.txt", txt_array, fmt='%d', delimiter=' ')
-print("Load data done ")
 ## ======= load data done =======
 
-
-## define the partition index, need to add partition function here
-t_partition_start = perf_counter()
+## ======= convert to csr mode =======
+global row_array, column_array
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-print ("using process number :", partition_num)
-partition_index = np.zeros(partition_num + 1, dtype=np.int32)
-for i in range(partition_num - 1):
-    # index_t = np.int32(len(txt_array)*(i+1)/partition_num)
-    # abs_array = np.absolute(dest_array - index_t)
-    # partition_index[i+1] = abs_array.argmin() + 1
-    partition_index[i+1] = np.int32((adj_matrix_dim)*(i+1)/partition_num)
-    ## partition_index[i+1] = np.int32(adj_matrix_dim*(math.pow(0.717, partition_num-1-i)))
-partition_index[partition_num] = adj_matrix_dim
-print("partition index array ", partition_index)
+row_list = np.bincount(txt_array[:, 0], minlength=adj_matrix_dim)
+row_array = np.add.accumulate(row_list)
+row_array = np.insert(row_array, 0, 0) ## insert a 0 in the front.
+column_array = txt_array[:, 1]   
+print("indices:", row_array)
+print("columns:", column_array)
+print("indices:", row_array.size)
+print("columns:", column_array.size)
 
+## ======= partition function -- partition edges =======
+global spilt_edge
+spilt_edge = np.array_split(txt_array, partition_num, axis=0)
+t_end = perf_counter()
+print("our code preprocess elapses ", t_end - t_start)
 
-## multi process pool.
-process_pool = Pool(partition_num)
-result_pool = []
+np.savetxt("./dataset/" + dataset_name + "_row.txt", row_array, fmt='%d', delimiter=' ')
+np.savetxt("./dataset/" + dataset_name + "_col.txt", column_array, fmt='%d', delimiter=' ')
 for i in range(partition_num):
-    result_pool.append(process_pool.apply_async(func=partion_multi_process, args=(dataset_name, i, _shared_array, partition_index, adj_matrix_dim)))
+    np.savetxt("./dataset/" + dataset_name + "_edge_" + str(i) + ".txt", spilt_edge[i], fmt='%d', delimiter=' ')
+    print ("save edge file ", i)
 
-process_pool.close()
-process_pool.join()
-
-graph_csr_row = []
-graph_csr_col = []
-
-for i in range(partition_num):
-    temp_a, temp_b = result_pool[i].get()
-    graph_csr_row.append(temp_a)
-    graph_csr_col.append(temp_b)
-    ## print(result_pool[i].get())
-
+t_process_start = perf_counter()
 intersection_pool = Pool(partition_num)
 final_result_pool = []
 for i in range(partition_num):
-    final_result_pool.append(intersection_pool.apply_async(func=intersection_multi_process, args=(i, _shared_array, graph_csr_row[i], graph_csr_col[i])))
+    final_result_pool.append(intersection_pool.apply_async(func=intersection_multi_process, args=(i, spilt_edge[i], row_array, column_array)))
 
 intersection_pool.close()
 intersection_pool.join()
@@ -173,8 +124,8 @@ result = 0
 for i in range(partition_num):
     result += int(final_result_pool[i].get())
 
-t_partition_end = perf_counter()
-print("our code execution elapses ", t_partition_end - t_partition_start)
+t_process_end = perf_counter()
+print("our code execution elapses ", t_process_end - t_process_start)
 print(result)
 
 

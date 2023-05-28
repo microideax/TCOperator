@@ -82,43 +82,43 @@ int main(int argc, char** argv) {
     auto device = xrt::device(device_index);
     std::cout << "Load the xclbin " << binaryFile << std::endl;
     auto uuid = device.load_xclbin(binaryFile);
-    auto krnl = xrt::kernel(device, uuid, "TriangleCount");
 
-    std::cout << "load graph dataset" << std::endl;
-
-    std::cout << " Read edge file ... " << std::endl;
-
-    std::fstream edge_file;
-    std::string edgeName = "./dataset/" + datasetName + "_edge.txt";
-    int edgeNum = 0;
-    getTxtSize(edgeName, edgeNum);
-
-    std::vector<int> columnNum;
-    std::vector<int> offsetNum;
-    std::vector<std::string> columnName;
-    std::vector<std::string> offsetName;
-    columnNum.resize(PARTITION_NUM);
-    offsetNum.resize(PARTITION_NUM);
-    columnName.resize(PARTITION_NUM);
-    offsetName.resize(PARTITION_NUM);
-
+    std::string name;
+    std::vector<xrt::kernel> tc_krnl;
+    tc_krnl.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
-        std::string offset_name_t = "./dataset/" + datasetName + "_row_" + std::to_string(i) + ".txt";
-        std::string column_name_t = "./dataset/" + datasetName + "_col_" + std::to_string(i) + ".txt";
-        int offset_num_t = 0, column_num_t = 0;
-        getTxtSize(offset_name_t, offset_num_t);
-        getTxtSize(column_name_t, column_num_t);
-        columnNum[i] = column_num_t;
-        offsetNum[i] = offset_num_t;
-        columnName[i] = column_name_t;
-        offsetName[i] = offset_name_t;
+        name = "TriangleCount:{TriangleCount_" + std::to_string(i+1) + "}";
+       tc_krnl[i] = xrt::kernel(device, uuid, name);
     }
 
+    std::cout << "load graph dataset" << std::endl;
+    std::cout << " Read edge file ... " << std::endl;
+    std::vector<std::string> edgeName;
+    std::vector<int> edgeNum;
+    edgeName.resize(PARTITION_NUM);
+    edgeNum.resize(PARTITION_NUM);
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        edgeName[i] = "./dataset/" + datasetName + "_edge_" + std::to_string(i) + ".txt";
+        getTxtSize(edgeName[i], edgeNum[i]);
+    }
+
+    int columnNum, offsetNum;
+    name = "./dataset/" + datasetName + "_row.txt";
+    getTxtSize(name, offsetNum);
+    name = "./dataset/" + datasetName + "_col.txt";
+    getTxtSize(name, columnNum);
+
     std::cout << " allocate memory in device" << std::endl;
-    int edge_size_bytes = edgeNum * 2 * sizeof(int);
-    auto edgeBuffer = xrt::bo(device, edge_size_bytes, krnl.group_id(0));
-    int* edgeList = edgeBuffer.map<int*>();
-    getTxtContent(edgeName, edgeList, edgeNum, true);
+    std::vector<xrt::bo> edgeBuffer;
+    std::vector<int*> edgeList;
+    edgeBuffer.resize(PARTITION_NUM);
+    edgeList.resize(PARTITION_NUM);
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        int edge_size_bytes = edgeNum[i] * 2 * sizeof(int);
+        edgeBuffer[i] = xrt::bo(device, edge_size_bytes, tc_krnl[i].group_id(0));
+        edgeList[i] = edgeBuffer[i].map<int*>();
+        getTxtContent(edgeName[i], edgeList[i], edgeNum[i], true);
+    }
 
     std::vector<xrt::bo> columnBuffer;
     std::vector<xrt::bo> offsetBuffer;
@@ -129,45 +129,59 @@ int main(int argc, char** argv) {
     columnList.resize(PARTITION_NUM);
     offsetList.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
-        int size_bytes = columnNum[i] * sizeof(int);
-        columnBuffer[i] = xrt::bo(device, size_bytes, krnl.group_id(1));
+        int size_bytes = columnNum * sizeof(int);
+        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
         columnList[i] = columnBuffer[i].map<int*>();
-        getTxtContent(columnName[i], columnList[i], columnNum[i], false);
+        getTxtContent("./dataset/" + datasetName + "_col.txt", columnList[i], columnNum, false);
 
-        size_bytes = offsetNum[i] * sizeof(int);
-        offsetBuffer[i] = xrt::bo(device, size_bytes, krnl.group_id(3));
+        size_bytes = offsetNum * sizeof(int);
+        offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
         offsetList[i] = offsetBuffer[i].map<int*>();
-        getTxtContent(offsetName[i], offsetList[i], offsetNum[i], false);
+        getTxtContent("./dataset/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
     }
 
     std::cout << "synchronize input buffer data to device global memory\n";
-    edgeBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    auto start_pcie = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
+        edgeBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
         columnBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
         offsetBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
     }
+    auto end_pcie = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed_data_transfer = end_pcie-start_pcie;
+    std::cout << "PCIe time = " << elapsed_data_transfer.count() << std::endl;
 
     std::cout << "Execution of the kernel\n";
     int TcNum = 0;
-    auto resultBuffer = xrt::bo(device, sizeof(int), krnl.group_id(0));
-    auto result = resultBuffer.map<int*>();
+    std::vector<xrt::bo> resultBuffer;
+    std::vector<int*> result;
+    resultBuffer.resize(PARTITION_NUM);
+    result.resize(PARTITION_NUM);
+    std::vector<xrt::run> krnl_run;
+    krnl_run.resize(PARTITION_NUM);
 
-    // auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
-        resultBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        auto start = std::chrono::steady_clock::now();
-        auto run = krnl(edgeBuffer, offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum, resultBuffer);
-        run.wait();
-        auto end = std::chrono::steady_clock::now();
-        std::chrono::duration<double> elapsed_seconds = end-start;
-        std::cout << elapsed_seconds.count() << std::endl;
-        resultBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-        TcNum += result[0];
+        resultBuffer[i] = xrt::bo(device, sizeof(int), tc_krnl[i].group_id(0));
+        result[i] = resultBuffer[i].map<int*>();
     }
-    // auto end = std::chrono::steady_clock::now();
-    // std::chrono::duration<double> elapsed_seconds = end-start;
 
-    // std::cout << "TC number = " << TcNum << " Time elapse " << elapsed_seconds.count() << std::endl;
-    std::cout << "TC number = " << TcNum << std::endl;
+    auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], resultBuffer[i]);
+    }
+
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        krnl_run[i].wait();
+    }
+    auto end = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end-start;
+
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        resultBuffer[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+        TcNum += result[i][0];
+    }
+
+    std::cout << "TC number = " << TcNum << " Time elapse " << elapsed_seconds.count() << std::endl;
+    // std::cout << "TC number = " << TcNum << std::endl;
     return 0;
 }

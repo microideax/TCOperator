@@ -1,4 +1,4 @@
-// tc_refactor file
+// tc_refactor file, TODO add list coalescing refactor and large length of list_b
 #include <stdint.h>
 #include <hls_stream.h>
 #include <hls_math.h>
@@ -13,9 +13,10 @@ typedef struct data_256bit_type {int data[8];} int256;
 #define T_2         8
 #define len_coale   512
 
-int o_begin_pre = 0;
-int o_end_pre = 0;
-float ratio_b = 0;
+
+int a_load_count = 0;
+int b_load_count = 0;
+int b_load_loop = 0;
 
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     int loop = (length + T - 1) / T;
@@ -141,8 +142,7 @@ void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 leng
         // miss, load data from off-chip memory and update cache
         int o_begin_a = offset_value.data[j] >> T_offset;
         int o_end_a = (offset_value.data[j] + length_value.data[j] + T - 1) >> T_offset;
-        
-        std::cout << "Loading list a" << std::endl;
+        a_load_count++;
         load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
 #pragma HLS pipeline
             int512 list_a_temp = column_list_1[ii];
@@ -178,7 +178,6 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
 
     bool coalesce_flag;
     int coalesce_index_start = 0;
-    int coalesce_length = 0;
 
     int item_begin[T_2];
     int item_end[T_2];
@@ -187,46 +186,70 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
 #pragma HLS array_partition variable=item_end type=complete dim=1
 #pragma HLS array_partition variable=list_temp type=complete dim=1
 
+
+    coalescing_item: for (int t = 0; t < T_2; t++) {
+#pragma HLS unroll
+        item_begin[t] = (offset_value.data[t]) >> T_offset;
+        item_end[t] = (offset_value.data[t] + length_value.data[t] + T - 1) >> T_offset;
+    }
+
+    int coalesce_begin = 0;
+    int coalesce_length = 0;
+    int coalesce_end = 0;
+
     // load list_b
     load_list_b_T_2: for (int j = 0; j < T_2; j++) {
+
+        if (coalesce_length == 0) {
+            coalesce_begin = offset_value.data[j];
+            coalesce_length = length_value.data[j];
+            coalesce_end = offset_value.data[j] + length_value.data[j];
+        }
 
         if (j == T_2 - 1) {
             coalesce_flag = false;
         } else {
-            int temp_offset = offset_value.data[j] + length_value.data[j];
-            coalesce_flag = ((temp_offset == offset_value.data[j+1]) && (coalesce_length < (65532 - 16)))? true: false;
+
+            int min_temp = hls::min(coalesce_begin, offset_value.data[j+1]);
+            int max_temp = hls::max(coalesce_end, (offset_value.data[j+1] + length_value.data[j+1]));
+            int length_temp = max_temp - min_temp;
+            if (length_temp > (coalesce_length + length_value.data[j+1] + 256)) { // assmue the request cost is 512/32 cycles.
+                coalesce_flag = false;
+            } else {
+                coalesce_flag = true;
+                coalesce_begin = min_temp;
+                coalesce_length = length_temp;
+                coalesce_end = max_temp;
+            }
+            // int temp_offset = offset_value.data[j] + length_value.data[j];
+            // coalesce_flag = (temp_offset == offset_value.data[j+1])? true: false;
         }
 
         if (coalesce_flag) {
-            coalesce_length += length_value.data[j];
             continue;
         } else {
+//             coalescing_item: for (int t = 0; t < T_2; t++) {
+// #pragma HLS unroll
+//                 item_begin[t] = (offset_value.data[t]) >> T_offset;
+//                 item_end[t] = (offset_value.data[t] + length_value.data[t] + T - 1) >> T_offset;
+//             }
+
+            // int o_begin_b = item_begin[coalesce_index_start];
+            // int o_end_b = item_end[j];
+            // coalesce_index_start = j + 1; // should be next item, in next iteration
+
+            int o_begin_b = coalesce_begin >> T_offset;
+            int o_end_b = (coalesce_end + T - 1) >> T_offset;
             coalesce_length = 0;
-            coalescing_item: for (int t = 0; t < T_2; t++) {
-#pragma HLS unroll
-                item_begin[t] = (offset_value.data[t]) >> T_offset;
-                item_end[t] = (offset_value.data[t] + length_value.data[t] + T - 1) >> T_offset;
-            }
-
-            int o_begin_b = item_begin[coalesce_index_start];
-            int o_end_b = item_end[j];
-            
-            if (o_begin_b <= o_end_pre){
-                std::cout << "list b overlap" << std::endl;
-                ratio_b += (o_end_pre - o_begin_b);
-            }
-            o_begin_pre = o_begin_b;
-            o_end_pre = o_end_b;
-
-            coalesce_index_start = j + 1; // should be next item, in next iteration
 
             if (o_begin_b == o_end_b) {
                 continue;
             }
-            std::cout << "Loading list b" << std::endl;
+            b_load_count++;
             load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
 #pragma HLS pipeline
                 int512 list_b_temp = column_list_2[ii];
+                b_load_loop++;
                 for (int tt = 0; tt < T_2; tt++) {
 #pragma HLS unroll
                     for (int jj = 0; jj < T; jj++) {
@@ -551,6 +574,6 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         }
     }
     tc_number[0] = TC_ping + TC_pong;
-    std::cout << "overlapped ratio" << ratio_b << std::endl;
+    std::cout << "load a number = " << a_load_count << " load b number = " << b_load_count << " load b loop = " << b_load_loop << std::endl;
 }
 }
