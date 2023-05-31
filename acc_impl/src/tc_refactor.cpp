@@ -3,6 +3,7 @@
 #include <hls_stream.h>
 #include <hls_math.h>
 #include <iostream>
+#include <algorithm>
 
 // use 512 bit width to full utilize bandwidthedgeStrm
 typedef struct data_512bit_type {int data[16];} int512;
@@ -104,6 +105,25 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 
 void loadListAtoCache() {}
 
+
+static int256 previous_1 = { { 0, 0, 0, 0, 0, 0, 0, 0 } }; // initialize with zeros
+static int256 previous_2 = { { 0, 0, 0, 0, 0, 0, 0, 0 } };
+
+// This function is used to compare the ideal overlapped offset of list b
+void compareAndUpdate(const int256& input) {
+
+    int overlapCount = 0;
+    for (int i = 0; i < 8; ++i) {
+        if ((std::find(std::begin(previous_1.data), std::end(previous_1.data), input.data[i]) != std::end(previous_1.data)) 
+        || (std::find(std::begin(previous_2.data), std::end(previous_2.data), input.data[i]) != std::end(previous_2.data))) {
+            ++overlapCount;
+        }
+    }
+    previous_1 = input; // update the previous value to current input
+    previous_2 = previous_1;
+    std::cout << "Overlap count: " << overlapCount << std::endl;
+}
+
 void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 lengthStrmA_value, 
                     int list_a_cache[1][T][BUF_DEPTH], int list_a_cache_tag[2], 
                     int list_a[T_2][T][BUF_DEPTH], int list_a_tag[T_2],
@@ -186,6 +206,7 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
 #pragma HLS array_partition variable=item_end type=complete dim=1
 #pragma HLS array_partition variable=list_temp type=complete dim=1
 
+    compareAndUpdate(offset_value);
 
     coalescing_item: for (int t = 0; t < T_2; t++) {
 #pragma HLS unroll
