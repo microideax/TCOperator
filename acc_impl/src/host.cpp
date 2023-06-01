@@ -98,14 +98,14 @@ int main(int argc, char** argv) {
     edgeName.resize(PARTITION_NUM);
     edgeNum.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
-        edgeName[i] = "./dataset/" + datasetName + "_edge_" + std::to_string(i) + ".txt";
+        edgeName[i] = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_edge_" + std::to_string(i) + ".txt";
         getTxtSize(edgeName[i], edgeNum[i]);
     }
 
     int columnNum, offsetNum;
-    name = "./dataset/" + datasetName + "_row.txt";
+    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt";
     getTxtSize(name, offsetNum);
-    name = "./dataset/" + datasetName + "_col.txt";
+    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt";
     getTxtSize(name, columnNum);
 
     std::cout << " allocate memory in device" << std::endl;
@@ -132,12 +132,12 @@ int main(int argc, char** argv) {
         int size_bytes = columnNum * sizeof(int);
         columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
         columnList[i] = columnBuffer[i].map<int*>();
-        getTxtContent("./dataset/" + datasetName + "_col.txt", columnList[i], columnNum, false);
+        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt", columnList[i], columnNum, false);
 
         size_bytes = offsetNum * sizeof(int);
         offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
         offsetList[i] = offsetBuffer[i].map<int*>();
-        getTxtContent("./dataset/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
+        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
     }
 
     std::cout << "synchronize input buffer data to device global memory\n";

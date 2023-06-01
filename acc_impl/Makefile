@@ -58,6 +58,7 @@ XF_PROJ_ROOT = $(PWD)
 TARGET := hw
 HOST_ARCH := x86
 SYSROOT := 
+FREQ = 250
 
 include ./utils.mk
 
@@ -111,7 +112,7 @@ ifneq ($(TARGET), hw)
 	VPP_FLAGS += -g
 endif
 
-
+VPP_FLAGS += --kernel_frequency $(FREQ)
 
 EXECUTABLE = ./tc_host
 EMCONFIG_DIR = $(TEMP_DIR)
