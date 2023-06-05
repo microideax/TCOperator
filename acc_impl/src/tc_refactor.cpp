@@ -14,6 +14,14 @@ typedef struct data_256bit_type {int data[8];} int256;
 #define T_2         8
 #define len_coale   512
 
+struct cache_line_t {
+    addr_t tag;
+    degree_t degree;
+}
+
+struct cache_t {
+    cache_line_t cache_line[8];
+}
 
 int a_load_count = 0;
 int b_load_count = 0;
@@ -166,6 +174,7 @@ void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 leng
         load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
 #pragma HLS pipeline
             int512 list_a_temp = column_list_1[ii];
+            std::cout << "load list a: " << std::endl;
             for (int jj = 0; jj < T; jj++) {
     #pragma HLS unroll
                 list_a[j][jj][ii - o_begin_a] = list_a_temp.data[jj];
@@ -270,6 +279,7 @@ void loadListB (int256 offsetStrmB_value, int256 lengthStrmB_value, int512* colu
             load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
 #pragma HLS pipeline
                 int512 list_b_temp = column_list_2[ii];
+                std::cout << "load list b: " << std::endl;
                 b_load_loop++;
                 for (int tt = 0; tt < T_2; tt++) {
 #pragma HLS unroll
@@ -401,11 +411,16 @@ loop_set_insection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len
 void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int list_a_offset, int list_a_len, \
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
+
+    std::cout << "lens of lists: " << list_a_len << " " << list_b_len << std::endl; 
     if (list_b_len >= (list_a_len << 5)) {
+        std::cout << "bi search:" << list_a_len << " "<< list_b_len  << std::endl;
         setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
     } else if (list_a_len >= (list_b_len << 5)) {
+        std::cout << "bi search:" << list_a_len << " "<< list_b_len  << std::endl;
         setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
     } else {
+        std::cout << "merge: " << list_a_len << " " << list_b_len << std::endl;
         setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
     }
 }
