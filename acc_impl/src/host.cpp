@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "load graph dataset" << std::endl;
-    std::cout << " Read edge file ... " << std::endl;
+    std::cout << "Read edge file ... " << std::endl;
     std::vector<std::string> edgeName;
     std::vector<int> edgeNum;
     edgeName.resize(PARTITION_NUM);

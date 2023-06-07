@@ -15,6 +15,7 @@ typedef struct data_256bit_type {int data[8];} int256;
 #define T_2         8
 #define len_coale   512
 
+/*
 struct cache_line_t {
     addr_t tag;
     degree_t degree;
@@ -23,6 +24,7 @@ struct cache_line_t {
 struct cache_t {
     cache_line_t cache_line[8];
 }
+*/
 
 int a_load_count = 0;
 int b_load_count = 0;
@@ -189,6 +191,67 @@ void loadCpyListA ( int512* column_list_1, int256 offsetStrmA_value, int256 leng
 
     offsetValueA[0] = offset_value;
     lengthValueA[0] = length_value;
+}
+
+void check_cache_hit(int* reqAddr, int* cache_tag, int* tReq, int reqNum){
+
+}
+
+// coalesce the request from the streams sent by load_offset function and check if any cache hit exists
+void coalesce_request(int256 offsetStrmB_value, int256 lengthStrmB_value, int* reqAddr, int* reqLen, int reqNum) {
+// the main functionality of this is coalescing the request in the input stream,
+// and then send the coalesced request to the memory controller
+    int256 offset_value;
+    int256 length_value;
+#pragma HLS array_partition variable=offset_value type=complete dim=1
+#pragma HLS array_partition variable=length_value type=complete dim=1
+
+    int offset_tmp[T_2];
+    int len_temp[T_2];
+
+    offset_value = offsetStrmB_value;
+    length_value = lengthStrmB_value;
+
+    for (int t = 0; t < T_2; t++) {
+        offset_tmp[t] = offset_value.data[t];
+        len_tmp[t] = length_value.data[t];
+    }
+
+    check_cache_hit(offset_tmp, cache_tag);
+
+    int len_req = 0;
+    reqAddrStrm << offset_tmp[0];
+    for (int t = 0; t < T_2; t++) {
+        if(offset_tmp[t+1] = offset_tmp[t] + len_tmp[t]) {
+            len_req += len_tmp[t];
+        } else {
+            reqLenStrm << len_req;
+            reqAddrStrm << offset_tmp[t+1];
+        }
+    }
+}
+
+// memory requestor reads the HBM memory and send the data to the on-chip caching system
+// input to this function is the coalesced request from the coalesce_request function as streams
+// the original request is also sent to this function to assist the memory controller to write the data to cache correctly
+void mem_requestor(int* reqAddr, int* reqLen, int reqNum, int512* column_list_2,){
+
+    for reqNum {
+        for (reqAddr, reqLen){
+            int512 adj_list = column_list_2[start:end];
+            mem_subsystem(adj_list, iDegree, oDegree);
+        }
+    }
+}
+
+// on-chip memory caching system
+// this onchip cache contains the cache archtecture and the cache controller
+// the loadListB() function will only read data from this mem_subsystem
+void mem_subsystem(){
+
+// cache 
+// interface to loadListB()
+
 }
 
 //below is my code to load list B with a address coalescing method
@@ -501,12 +564,12 @@ extern "C" {
 void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
                     int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
 
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 64 max_read_burst_length = 64 bundle = gmem0 port = edge_list
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 64 max_read_burst_length = 64 bundle = gmem1 port = offset_list_1
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 64 max_read_burst_length = 64 bundle = gmem2 port = offset_list_2
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 64 max_read_burst_length = 64 bundle = gmem3 port = column_list_1
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 64 max_read_burst_length = 64 bundle = gmem4 port = column_list_2
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 32 max_write_burst_length = 2 bundle = gmem5 port = tc_number
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 8 max_read_burst_length = 16 bundle = gmem0 port = edge_list
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 8 max_read_burst_length = 16 bundle = gmem1 port = offset_list_1
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 8 max_read_burst_length = 16 bundle = gmem2 port = offset_list_2
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 8 max_read_burst_length = 16 bundle = gmem3 port = column_list_1
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 8 max_read_burst_length = 16 bundle = gmem4 port = column_list_2
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 4 max_write_burst_length = 2 bundle = gmem5 port = tc_number
 
 #pragma HLS INTERFACE s_axilite port = edge_list bundle = control
 #pragma HLS INTERFACE s_axilite port = offset_list_1 bundle = control
