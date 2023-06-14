@@ -4,14 +4,16 @@
 #include <hls_math.h>
 #include <iostream>
 #include <algorithm>
-                                                                             
-#define BUF_DEPTH   512
-#define T           16
-#define T_offset    4
-#define E_per_burst 8
-#define Parallel    12
-#define Cache_size  16
-#define debug       true
+
+#define BUF_DEPTH       512
+#define T               16
+#define T_offset        4
+#define E_per_burst     8
+#define Parallel        12
+#define Cache_size      16
+#define Cache_offset    4
+#define Cache_mask      0xf
+#define debug           false
 
 typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
 typedef struct data_custom_type {
@@ -160,149 +162,47 @@ void loadCpyListA ( para_int a_element_in, int512* column_list_1,
     a_element_out[0] = a_value;
 }
 
-
-// preprocess load b function contains :
-// <1> hit-miss check;
-// <2> coalescing missed request;
-// <3> write b_status and update b_cache_tag;
-// input:  b_offset + b_length + b_cache_tag;
-// output: b_status + b_cache_tag;
-// Note: b_status is the memory requestor;
-void preLoadListB (hls::stream<para_int>& StrmB_in, hls::stream<bool>& ctrlStrm_in,
-                   hls::stream<bool>& ctrlStrm_out, hls::stream<req_int>& StrmB_out) {
-
-    int list_b_cache_tag[Cache_size]; // cache tag array
-#pragma HLS ARRAY_PARTITION variable=list_b_cache_tag complete dim=1
-    for (int i = 0; i < Cache_size; i++) {
-#pragma HLS unroll
-        list_b_cache_tag[i] = -1;
-    }
-
-    req_int b_element_out;
-#pragma HLS DATA_PACK variable=b_element_out
-#pragma HLS ARRAY_PARTITION variable=b_element_out.status complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_element_out.cache_id complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_element_out.offset complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_element_out.length complete dim=1
-
-    while (1) {
-#pragma HLS pipeline
-
-        para_int b_element_in = StrmB_in.read();
-#pragma HLS DATA_PACK variable=b_element_in
-#pragma HLS ARRAY_PARTITION variable=b_element_in.offset complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_element_in.length complete dim=1
-
-        // <1> hit-miss check
-        int hit_idx = 0;
-        int miss_idx = 0;
-        int need_coalsece[Parallel];
-        bool cache_hit = false;
-        for (int i = 0; i < Parallel; i++) {
-#pragma HLS pipeline
-            int tag_temp = b_element_in.offset[i];
-            for (int j = 0; j < Cache_size; j++) {
-#pragma HLS unroll
-                if (tag_temp == list_b_cache_tag[j]) {
-                    b_element_out.status[hit_idx] = 0x7f; // hit
-                    b_element_out.cache_id[hit_idx] = j; // cacheline id, copy from cache.
-                    cache_hit = true;
-                }
-            }
-            if (cache_hit) {
-                hit_idx ++;
-            } else {
-                need_coalsece[miss_idx] = i; // collect missed requests.
-                miss_idx ++;
-            }
-        }
-        // double check
-        if ((hit_idx + miss_idx) != Parallel) {
-            std::cout << " cache hit miss number is not correct! " << std::endl;
-            exit(-1); // error
-        }
-
-        // <2> coalescing missed request;
-        bool coalescing = false; // initialize
-        int out_idx = hit_idx;
-        for (int i = 0; i < miss_idx; i++) {
-#pragma HLS pipeline
-            int ori_idx = need_coalsece[i]; // input index
-            if (i == (miss_idx - 1)) {
-                if (coalescing == false) {
-                    b_element_out.status[out_idx] = 0x6f; // single load, no coalescing 
-                } else {
-                    b_element_out.status[out_idx] = 0x4f; // coalescing end flag;
-                }
-            } else {
-                int nxt_idx = need_coalsece[i+1]; // next index
-                int distance = b_element_in.offset[nxt_idx] - b_element_in.offset[ori_idx] - b_element_in.length[ori_idx];
-                bool coales_status = (distance > 64)? true: false; // check next status
-                if (coalescing == false) {
-                    if (coales_status) {
-                        b_element_out.status[out_idx] = 0x6f; // single load, distance > threshold
-                    } else {
-                        b_element_out.status[out_idx] = 0x2f; // coalescing start flag;
-                        coalescing = true;
-                    }
-                } else {
-                    if (coales_status) {
-                        b_element_out.status[out_idx] = 0x4f; // coalescing end flag;
-                        coalescing = false;
-                    } else {
-                        b_element_out.status[out_idx] = 0x3f; // coalescing middle flag;
-                    }
-                }
-            }
-            b_element_out.offset[out_idx] = b_element_in.offset[ori_idx];
-            b_element_out.length[out_idx] = b_element_in.length[ori_idx];
-            out_idx++;
-        }
-
-        // double check
-        if (out_idx != Parallel) {
-            std::cout << " cache hit miss number is not correct! " << std::endl;
-            exit(-1); // error
-        }
-
-        StrmB_out << b_element_out;
-
-        bool control_sig = ctrlStrm_in.read();
-        ctrlStrm_out << control_sig;
-        if (control_sig == false) {
-            break;
-        }
-
-        // <3> update cache_tag
-        for (int i = 0; i < Cache_size; i++) {
-#pragma HLS unroll
-            list_b_cache_tag[i] = -1; // at current stage, disable cache;
-        }
-    }
-}
-
-
 // load list b function, contains 
-// <1> fetch from off-chip memory (HBM) or cache to list_b;
-// <2> update cache data
+// <1> hit miss check and coalescing
+// <2> fetch from off-chip memory (HBM) or cache to list_b;
+// <3> update cache data
 // input:  b_request + column_list_2 + b_cache_data;
 // output: list_b + b_element_out;
-void loadListB (req_int b_request, int512* column_list_2, int b_cache_data[Cache_size][T][BUF_DEPTH], 
-                int list_b[Parallel][T][BUF_DEPTH], para_int b_element_out[1]) {
+void loadCpyListB (para_int b_request, int512* column_list_2, int list_b_cache_tag[Cache_size], 
+                int b_cache_data[Cache_size][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
+                para_int b_element_out[1]) {
 
-    req_int b_req_in = b_request;
+    para_int b_req_in = b_request;
 #pragma HLS DATA_PACK variable=b_req_in
-#pragma HLS ARRAY_PARTITION variable=b_req_in.status complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_req_in.cache_id complete dim=1
 #pragma HLS ARRAY_PARTITION variable=b_req_in.offset complete dim=1
 #pragma HLS ARRAY_PARTITION variable=b_req_in.length complete dim=1
 
     int item_begin[Parallel];
     int item_end[Parallel];
     int list_temp[T];
+    int cache_temp[T];
 #pragma HLS array_partition variable=item_begin type=complete dim=1
 #pragma HLS array_partition variable=item_end type=complete dim=1
 #pragma HLS array_partition variable=list_temp type=complete dim=1
+#pragma HLS array_partition variable=cache_temp type=complete dim=1
+    int coalesce_flag = false;
+    int coalesce_begin;
+    int coalesce_end;
+
+    int cache_idx[Parallel];
+    int cache_tag[Parallel];
+#pragma HLS array_partition variable=cache_idx type=complete dim=1
+#pragma HLS array_partition variable=cache_tag type=complete dim=1
+    bool update_cache_id[Cache_size]; // true for update, false for no update
+    int map_cache_id[Cache_size];
+#pragma HLS array_partition variable=update_cache_id type=complete dim=1
+#pragma HLS array_partition variable=map_cache_id type=complete dim=1
+
+    for (int t = 0; t < Cache_size; t++) {
+#pragma HLS unroll
+        update_cache_id[t] = false;
+        map_cache_id[t] = -1;
+    }
 
     for (int t = 0; t < Parallel; t++) {
 #pragma HLS unroll
@@ -310,65 +210,98 @@ void loadListB (req_int b_request, int512* column_list_2, int b_cache_data[Cache
         item_end[t] = (b_req_in.offset[t] + b_req_in.length[t] + T - 1) >> T_offset;
         b_element_out[0].offset[t] = b_req_in.offset[t];
         b_element_out[0].length[t] = b_req_in.length[t];
+        cache_idx[t] = b_req_in.offset[t] & Cache_mask;
+        cache_tag[t] = b_req_in.offset[t] >> Cache_offset;
     }
 
-    // <1> fetch from off-chip memory or cache to list_b;
-    int coalesce_begin = 0;
-    int coalesce_end   = 0;
     for (int i = 0; i < Parallel; i++) {
 #pragma HLS pipeline
-        int status = b_req_in.status[i];
-        if (status == 0x6f) { // single load, no coalescing
-            for (int ii = item_begin[i]; ii < item_end[i]; ii++) {
-#pragma HLS pipeline
-                int512 list_b_temp = column_list_2[ii];
-                for (int jj = 0; jj < T; jj++) {
-#pragma HLS unroll
-                    list_b[i][jj][ii - item_begin[i]] = list_b_temp.data[jj];
-                }
-            }
-        } else if (status == 0x7f) { // hit, fetch data from cache
-            int cacheline_id = b_req_in.cache_id[i];
-            for (int ii = item_begin[i]; ii < item_end[i]; ii++) {
+        if (list_b_cache_tag[cache_idx[i]] == cache_tag[i]) {
+        // hit copy from cache
+            for (int ii = 0; ii < (item_end[i] - item_begin[i]); ii++) {
 #pragma HLS pipeline
                 for (int jj = 0; jj < T; jj++) {
 #pragma HLS unroll
-                    list_b[i][jj][ii - item_begin[i]] = b_cache_data[cacheline_id][jj][ii - item_begin[i]];
+                    list_b[i][jj][ii] = b_cache_data[cache_idx[i]][jj][ii];
                 }
             }
-        } else if (status == 0x2f) { // coalescing start
-            coalesce_begin = item_begin[i];
-            coalesce_end = item_end[i];
-        } else if (status == 0x3f) { // coalescing middle
-            coalesce_begin = (item_begin[i] < coalesce_begin)? item_begin[i]: coalesce_begin;
-            coalesce_end = (item_end[i] > coalesce_end)? item_end[i]: coalesce_end;
-            continue;
-        } else if (status == 0x4f) { // coalescing end
-            coalesce_begin = (item_begin[i] < coalesce_begin)? item_begin[i]: coalesce_begin;
-            coalesce_end = (item_end[i] > coalesce_end)? item_end[i]: coalesce_end;
-            load_list_b: for (int ii = coalesce_begin; ii < coalesce_end; ii++) {
-#pragma HLS pipeline
-                int512 list_b_temp = column_list_2[ii];
-                for (int tt = 0; tt < Parallel; tt++) {
-#pragma HLS unroll
-                    for (int jj = 0; jj < T; jj++) {
-#pragma HLS unroll
-                        list_temp[jj] = list_b_temp.data[jj];
-                        if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
-                            list_b[tt][jj][ii - item_begin[tt]] = list_temp[jj];
+        } else {
+            update_cache_id[cache_idx[i]] = true; // update data
+            map_cache_id[cache_idx[i]] = i; // record original i for updating use.
+            if (coalesce_flag == false) {
+                coalesce_begin = item_begin[i];
+                coalesce_end = item_end[i];
+                coalesce_flag = true;
+            } else {
+                int end_idx_temp = hls::max(coalesce_end, item_end[i]);
+                int begin_idx_temp = hls::min(coalesce_begin, item_begin[i]);
+                int length_temp = (coalesce_end - coalesce_begin) + (item_end[i] - item_begin[i]);
+                if ((length_temp + 4) < (end_idx_temp - begin_idx_temp)) {
+                    // no coalescing, load data
+                    load_list_b: for (int ii = coalesce_begin; ii < coalesce_end; ii++) {
+            #pragma HLS pipeline
+                        int512 list_b_temp = column_list_2[ii];
+                        for (int tt = 0; tt < Parallel; tt++) {
+            #pragma HLS unroll
+                            for (int jj = 0; jj < T; jj++) {
+            #pragma HLS unroll
+                                if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
+                                    list_b[tt][jj][ii - item_begin[tt]] = list_b_temp.data[jj];
+                                }
+                            }
+                        }
+                        for (int cs = 0; cs < Cache_size; cs++) {
+            #pragma HLS unroll
+                            if (update_cache_id[cs] == true) {
+                                for (int jj = 0; jj < T; jj++) {
+            #pragma HLS unroll
+                                    if ((ii >= item_begin[map_cache_id[cs]]) && (ii < item_end[map_cache_id[cs]])) {
+                                        b_cache_data[cs][jj][ii - item_begin[map_cache_id[cs]]] = list_b_temp.data[jj];
+                                    }
+                                }
+                                update_cache_id[cs] = false;
+                            }
                         }
                     }
+                    coalesce_begin = item_begin[i];
+                    coalesce_end = item_end[i];
+                } else {
+                    // coalescing
+                    coalesce_begin = begin_idx_temp;
+                    coalesce_end = end_idx_temp;
                 }
             }
-            coalesce_begin = 0;
-            coalesce_end   = 0;
-        } else {
-            std::cout << " Error status list b ! " << std::endl;
         }
     }
 
-    // <2> update cache data
-    // Need to identify cache policy, at current stage no update 
+    // for last item load, the code is same as former code line 369.
+    if (coalesce_flag == true) {
+        load_list_b_last_item: for (int ii = coalesce_begin; ii < coalesce_end; ii++) {
+#pragma HLS pipeline
+            int512 list_b_temp = column_list_2[ii];
+            for (int tt = 0; tt < Parallel; tt++) {
+#pragma HLS unroll
+                for (int jj = 0; jj < T; jj++) {
+#pragma HLS unroll
+                    if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
+                        list_b[tt][jj][ii - item_begin[tt]] = list_b_temp.data[jj];
+                    }
+                }
+            }
+            for (int cs = 0; cs < Cache_size; cs++) {
+#pragma HLS unroll
+                if (update_cache_id[cs] == true) {
+                    for (int jj = 0; jj < T; jj++) {
+#pragma HLS unroll
+                        if ((ii >= item_begin[map_cache_id[cs]]) && (ii < item_end[map_cache_id[cs]])) {
+                            b_cache_data[cs][jj][ii - item_begin[map_cache_id[cs]]] = list_b_temp.data[jj];
+                        }
+                    }
+                    update_cache_id[cs] = false;
+                }
+            }
+        }
+    }
 }
 
 
@@ -595,10 +528,6 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS STREAM variable = offLenStrmA depth=512
     static hls::stream<para_int> offLenStrmB;
 #pragma HLS STREAM variable = offLenStrmB depth=2
-    static hls::stream<bool> ctrlStrm2;
-#pragma HLS STREAM variable = ctrlStrm2 depth=2
-    static hls::stream<req_int> reqStrmB;
-#pragma HLS STREAM variable = reqStrmB depth=2
 
     int list_a_ping[Parallel][T][BUF_DEPTH];
     int list_b_ping[Parallel][T][BUF_DEPTH];
@@ -634,6 +563,11 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int list_b_cache[Cache_size][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_b_cache type=complete dim=1
 #pragma HLS array_partition variable=list_b_cache type=complete dim=2
+    int list_b_cache_tag[Cache_size];
+#pragma HLS array_partition variable=list_b_cache_tag type=complete dim=1
+    for (int i = 0; i < Cache_size; i++) {
+        list_b_cache_tag[i] = -1;
+    }
 
     int triCount_ping[1]={0};
     int triCount_pong[1]={0};
@@ -641,7 +575,6 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 
     loadEdgeList(length, edge_list, edgeStrm);
     loadOffset(length, offset_list_1, offset_list_2, edgeStrm, ctrlStrm, offLenStrmA, offLenStrmB);
-    preLoadListB (offLenStrmB, ctrlStrm, ctrlStrm2, reqStrmB);
 
     int pp = 0; // ping-pong operation
     int TC_ping = 0;
@@ -659,19 +592,19 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 
 #pragma HLS pipeline
 
-        strm_control = ctrlStrm2.read();
+        strm_control = ctrlStrm.read();
         para_int a_ele_in = offLenStrmA.read();
-        req_int b_ele_in = reqStrmB.read();
+        para_int b_ele_in = offLenStrmB.read();
 
         if (pp) {
             processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
-            loadListB (b_ele_in, column_list_2, list_b_cache, list_b_pong, b_ele_out_ping);
+            loadCpyListB (b_ele_in, column_list_2, list_b_cache_tag, list_b_cache, list_b_pong, b_ele_out_ping);
             TC_pong += triCount_pong[0];
         } else {
             processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
-            loadListB (b_ele_in, column_list_2, list_b_cache, list_b_ping, b_ele_out_pong);
+            loadCpyListB (b_ele_in, column_list_2, list_b_cache_tag, list_b_cache, list_b_ping, b_ele_out_pong);
             TC_ping += triCount_ping[0];
         }
         pp = 1 - pp;
