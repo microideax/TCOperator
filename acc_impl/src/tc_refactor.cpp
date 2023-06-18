@@ -9,11 +9,11 @@
 #define T               16
 #define T_offset        4
 #define E_per_burst     8
-#define Parallel        12
-#define Cache_size      16
-#define Cache_offset    4
-#define Cache_mask      0xf
-#define COALESCE_DIST   4
+#define Parallel        8
+#define Cache_size      8
+#define Cache_offset    3
+#define Cache_mask      0x7
+#define COALESCE_DIST   8
 #define debug           false
 #define Profile         true
 
@@ -65,6 +65,7 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
         int a_value, a_offset, a_length;
         int b_value, b_offset, b_length;
         for (int j = 0; j < E_per_burst; j++) {
+#pragma HLS pipeline
             if (i*T + 2*j < length) {
                 a_value = edge_value.data[j*2];
                 a_offset = offset_list_1[a_value];
@@ -463,13 +464,15 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
 
-    if (list_b_len >= (list_a_len << 5)) {
-        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    } else if (list_a_len >= (list_b_len << 5)) {
-        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
-    } else {
-        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    }
+    setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+
+    // if (list_b_len >= (list_a_len << 5)) {
+    //     setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    // } else if (list_a_len >= (list_b_len << 5)) {
+    //     setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
+    // } else {
+    //     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    // }
 }
 
 void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
@@ -568,11 +571,11 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     static hls::stream<int512> edgeStrm;
 #pragma HLS STREAM variable = edgeStrm depth=16
     static hls::stream<bool> ctrlStrm;
-#pragma HLS STREAM variable = ctrlStrm depth=2
+#pragma HLS STREAM variable = ctrlStrm depth=16
     static hls::stream<para_int> offLenStrmA;
-#pragma HLS STREAM variable = offLenStrmA depth=512
+#pragma HLS STREAM variable = offLenStrmA depth=16
     static hls::stream<para_int> offLenStrmB;
-#pragma HLS STREAM variable = offLenStrmB depth=2
+#pragma HLS STREAM variable = offLenStrmB depth=16
 
     int list_a_ping[Parallel][T][BUF_DEPTH];
     int list_b_ping[Parallel][T][BUF_DEPTH];
@@ -586,11 +589,16 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS array_partition variable=list_a_pong type=complete dim=2
 #pragma HLS array_partition variable=list_b_pong type=complete dim=1 
 #pragma HLS array_partition variable=list_b_pong type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_a_ping type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_b_ping type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_a_pong type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_b_pong type=RAM_S2P impl=BRAM
 
 
     int list_a_cache[1][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_a_cache type=complete dim=1
 #pragma HLS array_partition variable=list_a_cache type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_a_cache type=RAM_S2P impl=BRAM
 
     int list_a_cache_tag[2];
     list_a_cache_tag[0] = -1; // invalid data in cache
@@ -608,6 +616,7 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int list_b_cache[Cache_size][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_b_cache type=complete dim=1
 #pragma HLS array_partition variable=list_b_cache type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_b_cache type=RAM_S2P impl=BRAM
     int list_b_cache_tag[Cache_size];
 #pragma HLS array_partition variable=list_b_cache_tag type=complete dim=1
     for (int i = 0; i < Cache_size; i++) {
