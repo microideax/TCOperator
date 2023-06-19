@@ -23,7 +23,7 @@ typedef struct data_custom_type {
     int length[Parallel];
 } para_int; // for parallel processing.
 
-#define OFFSET_CACHE_SIZE 128
+#define OFFSET_CACHE_SIZE 16
 
 int a_load_count = 0;
 int b_load_count = 0; 
@@ -109,6 +109,13 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 #pragma HLS DATA_PACK variable=b_para
 #pragma HLS ARRAY_PARTITION variable=b_para.offset complete dim=1
 #pragma HLS ARRAY_PARTITION variable=b_para.length complete dim=1
+
+
+    for (int i = 0; i < OFFSET_CACHE_SIZE; i++) {
+#pragma HLS pipeline ii = 1
+        cache_a[i].tag = -1;
+        cache_b[i].tag = -1;
+    }
  
     for (int i = 0; i < loop; i++) {
         int512 edge_value = eStrmIn.read();
@@ -652,8 +659,8 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     cache_line_t offsetBCache[OFFSET_CACHE_SIZE];
 // #pragma HLS array_partition variable=offsetACache type=complete dim=1
 // #pragma HLS array_partition variable=offsetBCache type=complete dim=1
-    cacheInitialize(offsetACache);
-    cacheInitialize(offsetBCache);
+    // cacheInitialize(offsetACache);
+    // cacheInitialize(offsetBCache);
 
 
     int list_a_cache[1][T][BUF_DEPTH];
