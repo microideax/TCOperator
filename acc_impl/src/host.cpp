@@ -12,6 +12,7 @@
 #include "experimental/xrt_kernel.h"
 
 #define PARTITION_NUM 1
+#define USE_REORDER true
 
 void getTxtSize (std::string file_name, int& lineNum) {
     std::cout << "Getting file size ... " << file_name;
@@ -98,7 +99,11 @@ int main(int argc, char** argv) {
     edgeName.resize(PARTITION_NUM);
     edgeNum.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
+#if USE_REORDER==true
+        edgeName[i] = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_edge_reorder_" + std::to_string(i) + ".txt";
+#else
         edgeName[i] = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_edge_" + std::to_string(i) + ".txt";
+#endif
         getTxtSize(edgeName[i], edgeNum[i]);
     }
 
