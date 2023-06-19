@@ -5,12 +5,35 @@
 #include <iostream>
 #include <algorithm>
 
-typedef struct data_512bit_type {int data[16];} int512;
-typedef struct data_256bit_type {int data[8];} int256;
-#define BUF_DEPTH   512
-#define T           16
-#define T_offset    4
-#define T_2         8
+#define BUF_DEPTH       512
+#define T               16
+#define T_offset        4
+#define E_per_burst     8
+#define Parallel        8
+#define Cache_size      8
+#define Cache_offset    3
+#define Cache_mask      0x7
+#define COALESCE_DIST   8
+#define debug           false
+#define Profile         true
+
+typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
+typedef struct data_custom_type {
+    int offset[Parallel];
+    int length[Parallel];
+} para_int; // for parallel processing.
+
+#if Profile==true
+    int hit_count_list_a = 0;
+    int hit_count_list_b = 0;
+    int miss_count_list_a = 0;
+    int miss_count_list_b = 0;
+    int memory_access_a = 0;
+    int memory_access_b = 0;
+    int data_amount_off_chip_a = 0;
+    int data_amount_off_chip_b = 0;
+#endif
+
 
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     int loop = (length + T - 1) / T;
@@ -22,18 +45,18 @@ void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
 
 void loadOffset(int length, int* offset_list_1, int* offset_list_2, 
                 hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
-                hls::stream<int256>& offsetStrmA, hls::stream<int256>& offsetStrmB, 
-                hls::stream<int256>& lengthStrmA, hls::stream<int256>& lengthStrmB ) {
+                hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
     int count = 0; // need to identify
-    int256 length_value_a;
-    int256 offset_value_a;
-#pragma HLS array_partition variable=length_value_a type=complete dim=1
-#pragma HLS array_partition variable=offset_value_a type=complete dim=1
-    int256 length_value_b;
-    int256 offset_value_b;
-#pragma HLS array_partition variable=length_value_b type=complete dim=1
-#pragma HLS array_partition variable=offset_value_b type=complete dim=1
+
+    para_int a_para;
+    para_int b_para;
+#pragma HLS DATA_PACK variable=a_para
+#pragma HLS ARRAY_PARTITION variable=a_para.offset complete dim=1
+#pragma HLS ARRAY_PARTITION variable=a_para.length complete dim=1
+#pragma HLS DATA_PACK variable=b_para
+#pragma HLS ARRAY_PARTITION variable=b_para.offset complete dim=1
+#pragma HLS ARRAY_PARTITION variable=b_para.length complete dim=1
  
     for (int i = 0; i < loop; i++) {
         int512 edge_value = eStrmIn.read();
@@ -41,8 +64,8 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 
         int a_value, a_offset, a_length;
         int b_value, b_offset, b_length;
-        for (int j = 0; j < T_2; j++) {
-#pragma HLS pipeline //This pipeline pragma seems unnecessary, consider to remove
+        for (int j = 0; j < E_per_burst; j++) {
+#pragma HLS pipeline
             if (i*T + 2*j < length) {
                 a_value = edge_value.data[j*2];
                 a_offset = offset_list_1[a_value];
@@ -59,40 +82,34 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 
             if ((a_length > 0) && (b_length > 0)) {
                 // make sure length > 0
-                length_value_a.data[count] = a_length;
-                offset_value_a.data[count] = a_offset;
-                length_value_b.data[count] = b_length;
-                offset_value_b.data[count] = b_offset;
+                a_para.offset[count] = a_offset;
+                a_para.length[count] = a_length;
+                b_para.offset[count] = b_offset;
+                b_para.length[count] = b_length;
                 count ++;
             }
 
-            if (count == T_2) {
+            if (count == Parallel) {
                 count = 0;
-                offsetStrmA << offset_value_a;
-                lengthStrmA << length_value_a;
-                offsetStrmB << offset_value_b;
-                lengthStrmB << length_value_b;
+                StrmA << a_para;
+                StrmB << b_para;
                 ctrlStrm << true; // not the end stream
             }
         }
     }
 
     // process ping-pong corner case;
-    for (int i = count; i < T_2; i++) {
-        length_value_a.data[i] = 0;
-        offset_value_a.data[i] = 0;
-        length_value_b.data[i] = 0;
-        offset_value_b.data[i] = 0;
+    for (int i = count; i < Parallel; i++) {
+        a_para.offset[i] = 0;
+        a_para.length[i] = 0;
+        b_para.offset[i] = 0;
+        b_para.length[i] = 0;
     }
-    offsetStrmA << offset_value_a;
-    lengthStrmA << length_value_a;
-    offsetStrmB << offset_value_b;
-    lengthStrmB << length_value_b;
+    StrmA << a_para;
+    StrmB << b_para;
     ctrlStrm << true; // not the end stream
-    offsetStrmA << offset_value_a;
-    lengthStrmA << length_value_a;
-    offsetStrmB << offset_value_b;
-    lengthStrmB << length_value_b;
+    StrmA << a_para;
+    StrmB << b_para;
     ctrlStrm << false; // end stream: the last stream
 }
 
@@ -102,32 +119,32 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 // <3> update cache
 // input:  column_list_1 + a_offset + a_length + list_a_cache + list_a_cache_tag + list_a_tag;
 // output: list_a + list_a_tag;
-void loadCpyListA ( int512* column_list_1, int256 a_offset, int256 a_length, 
+void loadCpyListA ( para_int a_element_in, int512* column_list_1, 
                     int list_a_cache[1][T][BUF_DEPTH], int list_a_cache_tag[2], 
-                    int list_a[T_2][T][BUF_DEPTH], int list_a_tag[T_2],
-                    int256 offsetValueA[1], int256 lengthValueA[1]) {
+                    int list_a[Parallel][T][BUF_DEPTH], int list_a_tag[Parallel],
+                    para_int a_element_out[1]) {
 
-    int256 offset_value;
-    int256 length_value;
-#pragma HLS array_partition variable=offset_value type=complete dim=1
-#pragma HLS array_partition variable=length_value type=complete dim=1
+    para_int a_value = a_element_in;
+#pragma HLS DATA_PACK variable=a_value
 
-    offset_value = a_offset;
-    length_value = a_length;
-
-    int list_cache_tag = -1;
-    int len_reg = 0;
+    int list_cache_tag = list_a_cache_tag[0];
+    int len_reg = list_a_cache_tag[1];
     int list_tag = -1;
 
-    load_copy_list_a_T_2: for (int j = 0; j < T_2; j++) {
-    list_cache_tag = list_a_cache_tag[0];
-    len_reg = list_a_cache_tag[1];
+    load_copy_list_a_Parallel: for (int j = 0; j < Parallel; j++) {
     list_tag = list_a_tag[j];
-    if (offset_value.data[j] == list_tag) {
+    if (a_value.offset[j] == list_tag) {
         // hit, no need to copy data
+#if Profile==true
+        hit_count_list_a++;
+#endif
         continue;
-    } else if (offset_value.data[j] == list_cache_tag) { // list_a_cache_tag[0]: value
+    } else if (a_value.offset[j] == list_cache_tag) { // list_a_cache_tag[0]: value
         // hit, copy data from list_a cache
+#if Profile==true
+        hit_count_list_a++;
+#endif
+
         list_a_tag[j] = list_cache_tag;
         copy_list_a: for (int ii = 0; ii < len_reg; ii++) { // list_a_tag[1]: length
 #pragma HLS pipeline
@@ -138,188 +155,196 @@ void loadCpyListA ( int512* column_list_1, int256 a_offset, int256 a_length,
         }
     } else {
         // miss, load data from off-chip memory and update cache
-        int o_begin_a = offset_value.data[j] >> T_offset;
-        int o_end_a = (offset_value.data[j] + length_value.data[j] + T - 1) >> T_offset;
-        a_load_count++;
+
+        int o_begin_a = a_value.offset[j] >> T_offset;
+        int o_end_a = (a_value.offset[j] + a_value.length[j] + T - 1) >> T_offset;
+
         load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
 #pragma HLS pipeline
             int512 list_a_temp = column_list_1[ii];
-            std::cout << "load list a: " << std::endl;
             for (int jj = 0; jj < T; jj++) {
     #pragma HLS unroll
                 list_a[j][jj][ii - o_begin_a] = list_a_temp.data[jj];
                 list_a_cache[0][jj][ii - o_begin_a] = list_a_temp.data[jj];
             }
         }
-        list_a_cache_tag[0] = offset_value.data[j];
+        list_a_cache_tag[0] = a_value.offset[j];
+        list_cache_tag = a_value.offset[j];
         list_a_cache_tag[1] = o_end_a - o_begin_a;
-        list_a_tag[j] = offset_value.data[j];
-        }
-    }
+        len_reg = o_end_a - o_begin_a;
+        list_a_tag[j] = a_value.offset[j];
 
-    offsetValueA[0] = offset_value;
-    lengthValueA[0] = length_value;
+#if Profile==true
+        miss_count_list_a++;
+        memory_access_a += (o_end_a - o_begin_a);
+        data_amount_off_chip_a += ((o_end_a - o_begin_a) * T);
+#endif
+
+    }
+    }
+    a_element_out[0] = a_value;
 }
-
-
-// preprocess load b function contains :  
-// <1> hit-miss check; 
-// <2> coalescing missed request;
-// <3> write b_status and update b_cache_tag;
-// input:  b_offset + b_length + b_cache_tag;
-// output: b_status + b_cache_tag;
-// Note: b_status is the memory requestor;
-void preLoadListB (int256 b_offset, int256 b_length, int256 b_cache_tag[1], int512 b_status[1]) {
-
-    // <1> hit-miss check;
-    int status[T];
-#pragma HLS array_partition variable=status type=complete dim=1
-    for (int i = 0; i < T; i++) {
-#pragma HLS unroll
-        status[i] = -1;
-    }
-    for (int i = 0; i < T_2; i++) {
-#pragma HLS pipeline
-        int cache_tag_temp = b_cache_tag[0].data[i];
-        for (int j = 0; j < T_2; j++) {
-#pragma HLS unroll
-            if (cache_tag_temp == b_offset.data[j]) {
-                status[2*j] = 0x7f; // hit
-                status[2*j +1] = i; // cacheline id
-            }
-        }
-    }
-
-    // <2> coalescing missed request;
-    bool coalescing = false; // initialize
-    for (int i = 0; i < T_2; i++) {
-#pragma HLS pipeline
-        if (i == (T_2 - 1)) {
-            if (coalescing == false) {
-                status[2*i] = 0x6f; // single load, no coalescing 
-            } else {
-                status[2*i] = 0x4f; // coalescing end flag;
-                status[2*i + 1] = b_offset.data[i] + b_length.data[i]; // coalescing load end;
-            }
-        } else {
-            int distance = b_offset.data[i+1] - b_offset.data[i] - b_length.data[i];
-            bool coales_status = ((distance > 64) || (status[2*(i+1)] == 0x7f))? true: false;
-            if (coalescing == false) {
-                if (coales_status) {
-                    status[2*i] = 0x6f; // single load, distance > threshold or next item hit
-                } else {
-                    status[2*i] = 0x2f; // coalescing start flag;
-                    status[2*i + 1] = b_offset.data[i]; // coalescing load start;
-                    coalescing = true;
-                }
-            } else {
-                if (coales_status) {
-                    status[2*i] = 0x4f; // coalescing end flag;
-                    status[2*i + 1] = b_offset.data[i] + b_length.data[i]; // coalescing load end;
-                    coalescing = false;
-                } else {
-                    status[2*i] = 0x3f; // coalescing middle flag;
-                }
-            }
-        }
-    }
-
-    // <3> write status and cache_tag
-    for (int i = 0; i < T_2; i++) {
-#pragma HLS unroll
-        b_cache_tag[0].data[i] = b_offset.data[i]; // tag = offset
-        b_status[0].data[i*2] = status[i*2];
-        b_status[0].data[i*2 + 1] = status[i*2 + 1];
-    }
-}
-
 
 // load list b function, contains 
-// <1> fetch from off-chip memory (HBM) or cache to list_b;
-// <2> update cache data
-// input:  b_offset + b_length + column_list_2 + b_cache + b_cache_data + b_status;
-// output: list_b;
-// Note: b_status is the memory requestor;
-void loadListB (int256 b_offset, int256 b_length, int512* column_list_2, 
-                int b_cache_data[T_2][T][BUF_DEPTH], int512 b_status, 
-                int list_b[T_2][T][BUF_DEPTH]) {
-    int item_begin[T_2];
-    int item_end[T_2];
-    int list_temp[T];
+// <1> hit miss check and coalescing
+// <2> fetch from off-chip memory (HBM) or cache to list_b;
+// <3> update cache data
+// input:  b_request + column_list_2 + b_cache_data;
+// output: list_b + b_element_out;
+void loadCpyListB (para_int b_request, int512* column_list_2, int list_b_cache_tag[Cache_size], 
+                int b_cache_data[Cache_size][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
+                para_int b_element_out[1]) {
+
+    para_int b_req_in = b_request;
+#pragma HLS DATA_PACK variable=b_req_in
+#pragma HLS ARRAY_PARTITION variable=b_req_in.offset complete dim=1
+#pragma HLS ARRAY_PARTITION variable=b_req_in.length complete dim=1
+
+    int item_begin[Parallel];
+    int item_end[Parallel];
 #pragma HLS array_partition variable=item_begin type=complete dim=1
 #pragma HLS array_partition variable=item_end type=complete dim=1
-#pragma HLS array_partition variable=list_temp type=complete dim=1
+    int coalesce_flag = false;
+    int coalesce_begin = -1;
+    int coalesce_end = -1;
 
-    for (int t = 0; t < T_2; t++) {
+    int cache_idx[Parallel];
+    int cache_tag[Parallel];
+#pragma HLS array_partition variable=cache_idx type=complete dim=1
+#pragma HLS array_partition variable=cache_tag type=complete dim=1
+    bool update_cache_id[Cache_size]; // true for update, false for no update
+    int map_cache_id[Cache_size];
+#pragma HLS array_partition variable=update_cache_id type=complete dim=1
+#pragma HLS array_partition variable=map_cache_id type=complete dim=1
+
+    for (int t = 0; t < Cache_size; t++) {
 #pragma HLS unroll
-        item_begin[t] = (b_offset.data[t]) >> T_offset;
-        item_end[t] = (b_offset.data[t] + b_length.data[t] + T - 1) >> T_offset;
+        update_cache_id[t] = false;
+        map_cache_id[t] = -1;
     }
 
-    // <1> fetch from off-chip memory or cache to list_b;
-    int coalesce_begin = 0;
-    int coalesce_end   = 0;
-    int length_max = 0;
-    for (int i = 0; i < T_2; i++) {
-        if (b_length.data[i] >= length_max) {
-            length_max = b_length.data[i];
-        } // get the max length;
+    for (int t = 0; t < Parallel; t++) {
+#pragma HLS unroll
+        item_begin[t] = (b_req_in.offset[t]) >> T_offset;
+        item_end[t] = (b_req_in.offset[t] + b_req_in.length[t] + T - 1) >> T_offset;
+        b_element_out[0].offset[t] = b_req_in.offset[t];
+        b_element_out[0].length[t] = b_req_in.length[t];
+        cache_idx[t] = b_req_in.offset[t] & Cache_mask;
+        cache_tag[t] = b_req_in.offset[t] >> Cache_offset;
+    }
 
-        int status = b_status.data[2*i];
-        if (status == 0x6f) { // single load, no coalescing
-            for (int ii = item_begin[i]; ii < item_end[i]; ii++) {
+    for (int i = 0; i < Parallel; i++) {
 #pragma HLS pipeline
-                int512 list_b_temp = column_list_2[ii];
+        if (list_b_cache_tag[cache_idx[i]] == cache_tag[i]) {
+        // hit copy from cache
+#if Profile==true
+        hit_count_list_b++;
+#endif
+
+            for (int ii = 0; ii < (item_end[i] - item_begin[i]); ii++) {
+#pragma HLS pipeline
+                int512 temp_test = column_list_2[ii + item_begin[i]];
                 for (int jj = 0; jj < T; jj++) {
 #pragma HLS unroll
-                    list_b[i][jj][ii - item_begin[i]] = list_b_temp.data[jj];
+                    list_b[i][jj][ii] = b_cache_data[cache_idx[i]][jj][ii];
                 }
             }
-        } else if (status == 0x7f) { // hit, fetch data from cache
-            int cacheline_id = b_status.data[2*i + 1];
-            for (int ii = item_begin[i]; ii < item_end[i]; ii++) {
-#pragma HLS pipeline
-                for (int jj = 0; jj < T; jj++) {
-#pragma HLS unroll
-                    list_b[tt][jj][ii - item_begin[i]] = b_cache_data[cacheline_id][jj][ii - item_begin[i]];
-                }
-            }
-        } else if (status == 0x2f) { // coalescing start
-            coalesce_begin = b_status.data[2*i + 1];
-        } else if (status == 0x3f) { // coalescing middle
-            continue;
-        } else if (status == 0x4f) { // coalescing end
-            coalesce_end = b_status.data[2*i + 1];
-            int o_begin_b = coalesce_begin >> T_offset;
-            int o_end_b = (coalesce_end + T - 1) >> T_offset;
-            load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
-#pragma HLS pipeline
-                int512 list_b_temp = column_list_2[ii];
-                for (int tt = 0; tt < T_2; tt++) {
-#pragma HLS unroll
-                    for (int jj = 0; jj < T; jj++) {
-#pragma HLS unroll
-                        list_temp[jj] = list_b_temp.data[jj];
-                        if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
-                            list_b[tt][jj][ii - item_begin[tt]] = list_temp[jj];
+        } else {
+#if Profile==true
+        miss_count_list_b++;
+#endif
+
+            if (coalesce_flag == false) {
+                coalesce_begin = item_begin[i];
+                coalesce_end = item_end[i];
+                coalesce_flag = true;
+            } else {
+                int end_idx_temp = hls::max(coalesce_end, item_end[i]);
+                int begin_idx_temp = hls::min(coalesce_begin, item_begin[i]);
+                int length_temp = (coalesce_end - coalesce_begin) + (item_end[i] - item_begin[i]);
+                if ((length_temp + COALESCE_DIST) < (end_idx_temp - begin_idx_temp)) {
+                    // no coalescing, load data
+#if Profile==true
+        memory_access_b += (coalesce_end - coalesce_begin);
+        data_amount_off_chip_b += ((coalesce_end - coalesce_begin) * T);
+#endif
+
+                    load_list_b: for (int ii = coalesce_begin; ii < coalesce_end; ii++) {
+            #pragma HLS pipeline
+                        int512 list_b_temp = column_list_2[ii];
+                        for (int tt = 0; tt < Parallel; tt++) {
+            #pragma HLS unroll
+                            if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
+                                for (int jj = 0; jj < T; jj++) {
+                #pragma HLS unroll
+                                    list_b[tt][jj][ii - item_begin[tt]] = list_b_temp.data[jj];
+                                }
+                            }
                         }
+                        for (int cs = 0; cs < Cache_size; cs++) {
+            #pragma HLS unroll
+                            int c_idx = map_cache_id[cs];
+                            if ((update_cache_id[cs] == true) && 
+                                (ii >= item_begin[c_idx]) && 
+                                (ii < item_end[c_idx])) {
+                                list_b_cache_tag[cs] = cache_tag[c_idx];
+                                for (int jj = 0; jj < T; jj++) {
+            #pragma HLS unroll
+                                    b_cache_data[cs][jj][ii - item_begin[c_idx]] = list_b_temp.data[jj];
+                                }
+                                if (ii == (item_end[c_idx] - 1)) {
+                                    update_cache_id[cs] = false;
+                                }
+                            }
+                        }
+                    }
+                    coalesce_begin = item_begin[i];
+                    coalesce_end = item_end[i];
+                } else {
+                    // coalescing
+                    coalesce_begin = begin_idx_temp;
+                    coalesce_end = end_idx_temp;
+                }
+            }
+            update_cache_id[cache_idx[i]] = true; // update data
+            map_cache_id[cache_idx[i]] = i; // record original i for updating use.
+        }
+    }
+
+    // for last item load, the code is same as former code line 369.
+    if (coalesce_flag == true) {
+#if Profile==true
+        memory_access_b += (coalesce_end - coalesce_begin);
+        data_amount_off_chip_b += ((coalesce_end - coalesce_begin) * T);
+#endif
+
+        load_list_b_last_item: for (int ii = coalesce_begin; ii < coalesce_end; ii++) {
+#pragma HLS pipeline
+            int512 list_b_temp = column_list_2[ii];
+            for (int tt = 0; tt < Parallel; tt++) {
+#pragma HLS unroll
+                if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
+                    for (int jj = 0; jj < T; jj++) {
+    #pragma HLS unroll
+                        list_b[tt][jj][ii - item_begin[tt]] = list_b_temp.data[jj];
                     }
                 }
             }
-        } else {
-            std::cout << " Error status list b ! " << std::endl;
-        }
-    }
-
-    // <2> update cache data
-    int copy_length = (length_max + T - 1) >> T_offset;
-    for (int i = 0; i < copy_length; i++) {
-#pragma HLS pipeline
-        for (int j = 0; j < T; j++) {
+            for (int cs = 0; cs < Cache_size; cs++) {
 #pragma HLS unroll
-            for (it = 0; it < T_2; it++) {
+                int c_idx = map_cache_id[cs];
+                if ((update_cache_id[cs] == true) && 
+                    (ii >= item_begin[c_idx]) && 
+                    (ii < item_end[c_idx])) {
+                    list_b_cache_tag[cs] = cache_tag[c_idx];
+                    for (int jj = 0; jj < T; jj++) {
 #pragma HLS unroll
-                b_cache_data[it][j][i] = list_b[it][j][i];
+                        b_cache_data[cs][jj][ii - item_begin[c_idx]] = list_b_temp.data[jj];
+                    }
+                    if (ii == (item_end[c_idx] - 1)) {
+                        update_cache_id[cs] = false;
+                    }
+                }
             }
         }
     }
@@ -354,7 +379,7 @@ int lbitBinarySearch(int list_b[T][BUF_DEPTH], int low, int high, int offset, in
     int i = (temp_value <= key) ? k : 0;
     int idx_i, block_i, bias_i;
     while ((k >>= 1)) {
-#pragma HLS pipeline ii=1
+#pragma HLS pipeline
         r = i + k;
         idx_r = r + init;
         block_r = idx_r >> 4;
@@ -439,53 +464,81 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
 
-    std::cout << "lens of lists: " << list_a_len << " " << list_b_len << std::endl; 
-    if (list_b_len >= (list_a_len << 5)) {
-        std::cout << "bi search:" << list_a_len << " "<< list_b_len  << std::endl;
-        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    } else if (list_a_len >= (list_b_len << 5)) {
-        std::cout << "bi search:" << list_a_len << " "<< list_b_len  << std::endl;
-        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
-    } else {
-        std::cout << "merge: " << list_a_len << " " << list_b_len << std::endl;
-        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    }
+    setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+
+    // if (list_b_len >= (list_a_len << 5)) {
+    //     setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    // } else if (list_a_len >= (list_b_len << 5)) {
+    //     setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
+    // } else {
+    //     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    // }
 }
 
-void processList(int list_a[T_2][T][BUF_DEPTH], int list_b[T_2][T][BUF_DEPTH], 
-                 int256 offsetValueA[1], int256 offsetValueB[1],
-                 int256 lengthValueA[1], int256 lengthValueB[1], int* tc_count) {
+void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
+                 para_int a_input[1], para_int b_input[1], int* tc_count) {
 #pragma HLS inline off
     int tri_count = 0;
-
-    int256 offset_value_a = offsetValueA[0];
-    int256 length_value_a = lengthValueA[0];
-#pragma HLS array_partition variable=offset_value_a type=complete
-#pragma HLS array_partition variable=length_value_a type=complete
-    int256 offset_value_b = offsetValueB[0];
-    int256 length_value_b = lengthValueB[0];
-#pragma HLS array_partition variable=offset_value_b type=complete
-#pragma HLS array_partition variable=length_value_b type=complete
-
-    int temp_result[T_2];
+    int temp_result[Parallel];
 #pragma HLS array_partition variable=temp_result type=complete dim=1
-#pragma HLS array_partition variable=list_a type=complete dim=1
-#pragma HLS array_partition variable=list_a type=complete dim=2
-#pragma HLS array_partition variable=list_b type=complete dim=1
-#pragma HLS array_partition variable=list_b type=complete dim=2
 
-    process_list: for (int j = 0; j < T_2; j++) {
+    para_int list_a_input = a_input[0];
+    para_int list_b_input = b_input[0];
+
+    process_list: for (int j = 0; j < Parallel; j++) {
 #pragma HLS unroll
-        int list_a_offset = offset_value_a.data[j];
-        int list_a_len = length_value_a.data[j];
-        int list_b_offset = offset_value_b.data[j];
-        int list_b_len = length_value_b.data[j];
+        int list_a_offset = list_a_input.offset[j];
+        int list_a_len = list_a_input.length[j];
+        int list_b_offset = list_b_input.offset[j];
+        int list_b_len = list_b_input.length[j];
         int tc_num[1] = {0};
         setIntersection(list_a[j], list_b[j], list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+#if debug == true
+        // print list a and list b
+        int a_offset_temp = list_a_offset & 0xf;
+        std::cout << "list a = ";
+        for (int a_temp = 0; a_temp < list_a_len; a_temp++) {
+            int a_idx = a_temp + a_offset_temp;
+            int a_1_dim = a_idx & 0xf;
+            int a_2_dim = a_idx >> T_offset;
+            std::cout << list_a[j][a_1_dim][a_2_dim] << " ";
+        }
+        std::cout << " a_len = " << list_a_len << " offset = " << list_a_offset << std::endl;
+
+        int b_offset_temp = list_b_offset & 0xf;
+        std::cout << "list b = ";
+        for (int b_temp = 0; b_temp < list_b_len; b_temp++) {
+            int b_idx = b_temp + b_offset_temp;
+            int b_1_dim = b_idx & 0xf;
+            int b_2_dim = b_idx >> T_offset;
+            std::cout << list_b[j][b_1_dim][b_2_dim] << " ";
+        }
+        std::cout << " b_len = " << list_b_len << " offset = " << list_b_offset << std::endl;
+
+        // print list a two lines
+        std::cout << "list a [" << j << "] = ";
+        for (int debug_j = 0; debug_j < 2; debug_j++) {
+            for (int debug_k = 0; debug_k < T; debug_k ++) {
+                std::cout << list_a[j][debug_k][debug_j] << " ";
+            }
+        }
+        std::cout << std::endl;
+
+        // print list b two lines
+        std::cout << "list b [" << j << "] = ";
+        for (int debug_j = 0; debug_j < 2; debug_j++) {
+            for (int debug_k = 0; debug_k < T; debug_k ++) {
+                std::cout << list_b[j][debug_k][debug_j] << " ";
+            }
+        }
+        std::cout << std::endl;
+
+        std::cout << "tc_num = " << tc_num[0] << std::endl;
+#endif
         temp_result[j] = tc_num[0];
     }
 
-    process_result_sum: for (int j = 0; j < T_2; j++) {
+    process_result_sum: for (int j = 0; j < Parallel; j++) {
         tri_count += temp_result[j];
     }
 
@@ -517,21 +570,17 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 
     static hls::stream<int512> edgeStrm;
 #pragma HLS STREAM variable = edgeStrm depth=16
-    static hls::stream<int256> offsetStrm_A;
-#pragma HLS STREAM variable = offsetStrm_A depth=16
-    static hls::stream<int256> offsetStrm_B;
-#pragma HLS STREAM variable = offsetStrm_B depth=16
-    static hls::stream<int256> lengthStrm_A;
-#pragma HLS STREAM variable = lengthStrm_A depth=16
-    static hls::stream<int256> lengthStrm_B;
-#pragma HLS STREAM variable = lengthStrm_B depth=16
     static hls::stream<bool> ctrlStrm;
 #pragma HLS STREAM variable = ctrlStrm depth=16
+    static hls::stream<para_int> offLenStrmA;
+#pragma HLS STREAM variable = offLenStrmA depth=16
+    static hls::stream<para_int> offLenStrmB;
+#pragma HLS STREAM variable = offLenStrmB depth=16
 
-    int list_a_ping[T_2][T][BUF_DEPTH];
-    int list_b_ping[T_2][T][BUF_DEPTH];
-    int list_a_pong[T_2][T][BUF_DEPTH];
-    int list_b_pong[T_2][T][BUF_DEPTH];
+    int list_a_ping[Parallel][T][BUF_DEPTH];
+    int list_b_ping[Parallel][T][BUF_DEPTH];
+    int list_a_pong[Parallel][T][BUF_DEPTH];
+    int list_b_pong[Parallel][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_a_ping type=complete dim=1
 #pragma HLS array_partition variable=list_a_ping type=complete dim=2
 #pragma HLS array_partition variable=list_b_ping type=complete dim=1 
@@ -540,63 +589,38 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS array_partition variable=list_a_pong type=complete dim=2
 #pragma HLS array_partition variable=list_b_pong type=complete dim=1 
 #pragma HLS array_partition variable=list_b_pong type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_a_ping type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_b_ping type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_a_pong type=RAM_S2P impl=BRAM
+#pragma HLS BIND_STORAGE variable=list_b_pong type=RAM_S2P impl=BRAM
 
-    int256 offset_a_ping[1];
-    int256 offset_a_pong[1];
-    int256 offset_b_ping[1];
-    int256 offset_b_pong[1];
-#pragma HLS array_partition variable=offset_a_ping type=complete dim=1 
-#pragma HLS array_partition variable=offset_a_pong type=complete dim=1 
-#pragma HLS array_partition variable=offset_b_ping type=complete dim=1 
-#pragma HLS array_partition variable=offset_b_pong type=complete dim=1
-
-    int256 length_a_ping[1];
-    int256 length_a_pong[1];
-    int256 length_b_ping[1];
-    int256 length_b_pong[1];
-#pragma HLS array_partition variable=length_a_ping type=complete dim=1 
-#pragma HLS array_partition variable=length_a_pong type=complete dim=1 
-#pragma HLS array_partition variable=length_b_ping type=complete dim=1 
-#pragma HLS array_partition variable=length_b_pong type=complete dim=1
-
-    for (int t = 0; t < T_2; t++) { // initialize
-#pragma HLS unroll
-        offset_a_ping[0].data[t] = 0;
-        offset_a_pong[0].data[t] = 0;
-        offset_b_ping[0].data[t] = 0;
-        offset_b_pong[0].data[t] = 0;
-        length_a_ping[0].data[t] = 0;
-        length_a_pong[0].data[t] = 0;
-        length_b_ping[0].data[t] = 0;
-        length_b_pong[0].data[t] = 0;
-    }
 
     int list_a_cache[1][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_a_cache type=complete dim=1
 #pragma HLS array_partition variable=list_a_cache type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_a_cache type=RAM_S2P impl=BRAM
 
     int list_a_cache_tag[2];
-#pragma HLS array_partition variable=list_a_cache_tag type=complete dim=1
-
     list_a_cache_tag[0] = -1; // invalid data in cache
     list_a_cache_tag[1] = 0; // valid data length
 
-    int list_a_pong_tag[T_2]; // indicate list_a value, if hit, no need to copy.
-    int list_a_ping_tag[T_2];
+    int list_a_pong_tag[Parallel]; // indicate list_a value, if hit, no need to copy.
+    int list_a_ping_tag[Parallel];
 #pragma HLS array_partition variable=list_a_pong_tag type=complete dim=1
 #pragma HLS array_partition variable=list_a_ping_tag type=complete dim=1
-    for (int i = 0; i < T_2; i++) {
+    for (int i = 0; i < Parallel; i++) {
         list_a_pong_tag[i] = -1;
         list_a_ping_tag[i] = -1;
     }
 
-    int list_b_cache[T_2][T][BUF_DEPTH];
+    int list_b_cache[Cache_size][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_b_cache type=complete dim=1
 #pragma HLS array_partition variable=list_b_cache type=complete dim=2
-    int list_b_cache_tag[T_2];
+#pragma HLS BIND_STORAGE variable=list_b_cache type=RAM_S2P impl=BRAM
+    int list_b_cache_tag[Cache_size];
 #pragma HLS array_partition variable=list_b_cache_tag type=complete dim=1
-    for (int i = 0; i < T_2; i++) {
-        list_b_cache_tag[i] = -1; // offset
+    for (int i = 0; i < Cache_size; i++) {
+        list_b_cache_tag[i] = -1;
     }
 
     int triCount_ping[1]={0};
@@ -604,43 +628,37 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int length = edge_num*2;
 
     loadEdgeList(length, edge_list, edgeStrm);
-    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, ctrlStrm, \
-                offsetStrm_A, offsetStrm_B, lengthStrm_A, lengthStrm_B);
+    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, ctrlStrm, offLenStrmA, offLenStrmB);
 
-    // int loop = (length + T - 1) /T;
     int pp = 0; // ping-pong operation
     int TC_ping = 0;
     int TC_pong = 0;
-
     bool strm_control;
-    int256 offset_strm_a;
-    int256 offset_strm_b;
-    int256 length_strm_a;
-    int256 length_strm_b;
+
+
+    // need to be parallel processed, complete partition
+    para_int a_ele_out_ping[1];
+    para_int a_ele_out_pong[1];
+    para_int b_ele_out_ping[1];
+    para_int b_ele_out_pong[1];
+
     pp_load_cpy_process: while(1) {
+
+#pragma HLS pipeline
+
         strm_control = ctrlStrm.read();
-        offset_strm_a = offsetStrm_A.read();
-        offset_strm_b = offsetStrm_B.read();
-        length_strm_a = lengthStrm_A.read();
-        length_strm_b = lengthStrm_B.read();
+        para_int a_ele_in = offLenStrmA.read();
+        para_int b_ele_in = offLenStrmB.read();
 
         if (pp) {
-            // preload_b ping
-            processList (list_a_ping, list_b_ping, offset_a_ping, offset_b_ping, \
-                         length_a_ping, length_b_ping, triCount_pong);
-            loadCpyListA (column_list_1, offset_strm_a, length_strm_a, list_a_cache,\
-                         list_a_cache_tag, list_a_pong, list_a_pong_tag, offset_a_pong, length_a_pong);
-            loadListB (offset_strm_b, length_strm_b, column_list_2, list_b_cache, \
-                         list_b_cache_tag, list_b_pong, offset_b_pong, length_b_pong);
+            processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
+            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
+            loadCpyListB (b_ele_in, column_list_2, list_b_cache_tag, list_b_cache, list_b_pong, b_ele_out_ping);
             TC_pong += triCount_pong[0];
         } else {
-            // preload pong
-            processList (list_a_pong, list_b_pong, offset_a_pong, offset_b_pong, \
-                         length_a_pong, length_b_pong, triCount_ping);
-            loadCpyListA (column_list_1, offset_strm_a, length_strm_a, list_a_cache, \
-                         list_a_cache_tag, list_a_ping, list_a_ping_tag, offset_a_ping, length_a_ping);
-            loadListB (offset_strm_b, length_strm_b, column_list_2, list_b_cache, \
-                         list_b_cache_tag, list_b_ping, offset_b_ping, length_b_ping);
+            processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
+            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
+            loadCpyListB (b_ele_in, column_list_2, list_b_cache_tag, list_b_cache, list_b_ping, b_ele_out_pong);
             TC_ping += triCount_ping[0];
         }
         pp = 1 - pp;
@@ -649,9 +667,19 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
             break;
         }
     }
+#if Profile==true
+    std::cout << "Cache size = " << Cache_size << std::endl;
+    std::cout << "Parallel size = " << Parallel << std::endl;
+    std::cout << "hit_count_list_a = " << hit_count_list_a << std::endl;
+    std::cout << "hit_count_list_b = " << hit_count_list_b << std::endl;
+    std::cout << "miss_count_list_a = " << miss_count_list_a << std::endl;
+    std::cout << "miss_count_list_b = " << miss_count_list_b << std::endl;
+    std::cout << "memory_access_a = " << memory_access_a << std::endl;;
+    std::cout << "memory_access_b = " << memory_access_b << std::endl;
+    std::cout << "data_amount_off_chip_a = " << data_amount_off_chip_a << std::endl;
+    std::cout << "data_amount_off_chip_b = " << data_amount_off_chip_b << std::endl;
+#endif
+
     tc_number[0] = TC_ping + TC_pong;
-    std::cout << "load a number = " << a_load_count << " load b number = " << b_load_count << " load b loop = " << b_load_loop << std::endl;
-    std::cout << "data reuse count = " << data_reuse << std::endl;
-    std::cout << "edge list count = " << edge_num << std::endl;
 }
 }

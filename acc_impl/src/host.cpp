@@ -130,12 +130,12 @@ int main(int argc, char** argv) {
     offsetList.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
         int size_bytes = columnNum * sizeof(int);
-        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
+        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
         columnList[i] = columnBuffer[i].map<int*>();
         getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt", columnList[i], columnNum, false);
 
         size_bytes = offsetNum * sizeof(int);
-        offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
+        offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
         offsetList[i] = offsetBuffer[i].map<int*>();
         getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
     }
