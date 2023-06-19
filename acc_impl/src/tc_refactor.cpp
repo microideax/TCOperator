@@ -10,17 +10,10 @@
 #define T_offset        4
 #define E_per_burst     8
 #define Parallel        8
-<<<<<<< HEAD
-#define Cache_size      16
-#define Cache_offset    4
-#define Cache_mask      0xf
-#define COALESCE_DIST   4
-=======
 #define Cache_size      8
 #define Cache_offset    3
 #define Cache_mask      0x7
 #define COALESCE_DIST   8
->>>>>>> 3641861403a270ee250c8f428ba377e85affb29f
 #define debug           false
 #define Profile         true
 
@@ -30,7 +23,7 @@ typedef struct data_custom_type {
     int length[Parallel];
 } para_int; // for parallel processing.
 
-#define OFFSET_CACHE_SIZE 512
+#define OFFSET_CACHE_SIZE 128
 
 int a_load_count = 0;
 int b_load_count = 0; 
@@ -525,15 +518,6 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
 
-<<<<<<< HEAD
-//    if (list_b_len >= (list_a_len << 5)) {
-//        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-//    } else if (list_a_len >= (list_b_len << 5)) {
-//        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
-//    } else {
-        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-//    }
-=======
     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
 
     // if (list_b_len >= (list_a_len << 5)) {
@@ -543,7 +527,6 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
     // } else {
     //     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
     // }
->>>>>>> 3641861403a270ee250c8f428ba377e85affb29f
 }
 
 void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
@@ -667,8 +650,8 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 
     cache_line_t offsetACache[OFFSET_CACHE_SIZE];
     cache_line_t offsetBCache[OFFSET_CACHE_SIZE];
-#pragma HLS array_partition variable=offsetACache type=complete dim=1
-#pragma HLS array_partition variable=offsetBCache type=complete dim=1
+// #pragma HLS array_partition variable=offsetACache type=complete dim=1
+// #pragma HLS array_partition variable=offsetBCache type=complete dim=1
     cacheInitialize(offsetACache);
     cacheInitialize(offsetBCache);
 
