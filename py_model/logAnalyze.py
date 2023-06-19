@@ -34,7 +34,7 @@ def count_loading_list_b_lines_and_sum_overlap_counts(log_file_path):
 
     with open(log_file_path, 'r') as log_file:
         for line in log_file:
-            if "Loading list b" in line:
+            if "load offset values" in line:
                 loading_list_b_count += 1
             if line.startswith("Overlap count:"):
                 overlap_count = int(line.split(":")[1].strip())

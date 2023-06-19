@@ -154,7 +154,7 @@ endif
 
 ########################## Kernel compiler global settings ##########################
 
-VPP_FLAGS +=   --config $(CUR_DIR)/conn_u200_u250.cfg
+VPP_FLAGS +=   --config $(CUR_DIR)/conn_u50.cfg
 VPP_FLAGS +=  -I $(XFLIB_DIR)/include -I $(XFLIB_DIR)/kernel -I $(XFLIB_DIR)/include -I $(XFLIB_DIR)/include/hw
 
 

@@ -62,10 +62,10 @@ def save_reordered_edge_list(graph_edges, sorted_vertices, file_path):
             edge_file.write(f"{u} {v}\n")
 
 # Example usage
-edge_list_file = "dataset/amazon0601_edge_0.txt"
-offset_file = "amazon0601_row.txt"
-column_file = "amazon0601_col.txt"
-reordered_edge_list_file = "amazon0601_edge_0.txt"
+edge_list_file = "../acc_impl_noproc/dataset_1pe/as20000102_edge_0.txt"
+offset_file = "as20000102_row.txt"
+column_file = "as20000102_col.txt"
+reordered_edge_list_file = "./as20000102_reordered_edge_0.txt"
 
 # Read graph from edge list file
 graph_edges = read_graph_from_edge_list(edge_list_file)
