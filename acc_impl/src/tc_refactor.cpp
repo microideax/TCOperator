@@ -10,10 +10,17 @@
 #define T_offset        4
 #define E_per_burst     8
 #define Parallel        8
+<<<<<<< HEAD
+#define Cache_size      16
+#define Cache_offset    4
+#define Cache_mask      0xf
+#define COALESCE_DIST   4
+=======
 #define Cache_size      8
 #define Cache_offset    3
 #define Cache_mask      0x7
 #define COALESCE_DIST   8
+>>>>>>> 3641861403a270ee250c8f428ba377e85affb29f
 #define debug           false
 #define Profile         true
 
@@ -22,6 +29,56 @@ typedef struct data_custom_type {
     int offset[Parallel];
     int length[Parallel];
 } para_int; // for parallel processing.
+
+#define OFFSET_CACHE_SIZE 512
+
+int a_load_count = 0;
+int b_load_count = 0; 
+int b_load_loop = 0; 
+int a_cacheHits = 0;
+int a_cacheMisses = 0;  
+int b_cacheHits = 0;                                                                                                        
+int b_cacheMisses = 0;  
+
+struct cache_line_t {
+    int tag;
+    int offset;
+    int len;
+};
+
+void cacheInitialize(cache_line_t* cache) {
+    for (int i = 0; i < OFFSET_CACHE_SIZE; i++) {
+#pragma HLS pipeline ii = 1
+        cache[i].tag = -1;
+    }
+}
+
+void cacheLoad(cache_line_t* cache, int *offset_port_1,                                                                     
+                 int nodeIndex, int& offset, int& len,                                                                       
+                 int& hitCounter, int& missCounter) {                                                 
+#pragma HLS inline                                                                                                          
+    int lineIndex = nodeIndex % OFFSET_CACHE_SIZE;                                                                                 
+    int tag = nodeIndex;                                                                                                    
+    // int offset = 0;                                                                                                      
+    int offset_1 = 0;                                                                                                       
+    if (cache[lineIndex].tag == tag) {                                                                                      
+        // Cache hit                                                                                                        
+        len = cache[lineIndex].len;                                                                                         
+        offset = cache[lineIndex].offset;                                                                                   
+        hitCounter++;                                                                                                       
+        std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
+    } else {                                                                                                                
+        // Cache miss                                                                                                       
+        cache[lineIndex].tag = tag;                                                                                         
+        offset = offset_port_1[nodeIndex];                                                                                  
+        offset_1 = offset_port_1[nodeIndex+1];                                                                              
+        cache[lineIndex].offset = offset;                                                                                   
+        len = offset_1 - offset;                                                                                            
+        cache[lineIndex].len = len;                                                                                         
+        missCounter++;                                                                                                      
+        std::cout <<" offset miss: "<< missCounter <<"  Node index:" << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                  
+    }                                                                                                                       
+}     
 
 #if Profile==true
     int hit_count_list_a = 0;
@@ -44,6 +101,8 @@ void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
 }
 
 void loadOffset(int length, int* offset_list_1, int* offset_list_2, 
+                cache_line_t cache_a[OFFSET_CACHE_SIZE], 
+                cache_line_t cache_b[OFFSET_CACHE_SIZE],
                 hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
                 hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
@@ -68,11 +127,13 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
 #pragma HLS pipeline
             if (i*T + 2*j < length) {
                 a_value = edge_value.data[j*2];
-                a_offset = offset_list_1[a_value];
-                a_length = offset_list_1[a_value + 1] - a_offset;
+                cacheLoad(cache_a, offset_list_1, a_value, a_offset, a_length, a_cacheHits, a_cacheMisses);
+                // a_offset = offset_list_1[a_value];
+                // a_length = offset_list_1[a_value + 1] - a_offset;
                 b_value = edge_value.data[j*2 + 1];
-                b_offset = offset_list_2[b_value];
-                b_length = offset_list_2[b_value + 1] - b_offset;
+                cacheLoad(cache_b, offset_list_2, b_value, b_offset, b_length, b_cacheHits, b_cacheMisses);
+                // b_offset = offset_list_2[b_value];
+                // b_length = offset_list_2[b_value + 1] - b_offset;
             } else {
                 a_offset = 0;
                 a_length = 0;
@@ -464,6 +525,15 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
 
+<<<<<<< HEAD
+//    if (list_b_len >= (list_a_len << 5)) {
+//        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+//    } else if (list_a_len >= (list_b_len << 5)) {
+//        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
+//    } else {
+        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+//    }
+=======
     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
 
     // if (list_b_len >= (list_a_len << 5)) {
@@ -473,6 +543,7 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
     // } else {
     //     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
     // }
+>>>>>>> 3641861403a270ee250c8f428ba377e85affb29f
 }
 
 void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
@@ -594,6 +665,13 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS BIND_STORAGE variable=list_a_pong type=RAM_S2P impl=BRAM
 #pragma HLS BIND_STORAGE variable=list_b_pong type=RAM_S2P impl=BRAM
 
+    cache_line_t offsetACache[OFFSET_CACHE_SIZE];
+    cache_line_t offsetBCache[OFFSET_CACHE_SIZE];
+#pragma HLS array_partition variable=offsetACache type=complete dim=1
+#pragma HLS array_partition variable=offsetBCache type=complete dim=1
+    cacheInitialize(offsetACache);
+    cacheInitialize(offsetBCache);
+
 
     int list_a_cache[1][T][BUF_DEPTH];
 #pragma HLS array_partition variable=list_a_cache type=complete dim=1
@@ -628,7 +706,8 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int length = edge_num*2;
 
     loadEdgeList(length, edge_list, edgeStrm);
-    loadOffset(length, offset_list_1, offset_list_2, edgeStrm, ctrlStrm, offLenStrmA, offLenStrmB);
+    loadOffset(length, offset_list_1, offset_list_2, offsetACache, offsetBCache, 
+                edgeStrm, ctrlStrm, offLenStrmA, offLenStrmB);
 
     int pp = 0; // ping-pong operation
     int TC_ping = 0;
