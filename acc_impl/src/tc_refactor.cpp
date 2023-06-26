@@ -10,11 +10,10 @@
 #define T_offset        4
 #define E_per_burst     8
 #define Parallel        8
-#define COALESCE_DIST   16
-#define CACHE_ENABLE    false
-#define OFFSET_CACHE_SIZE   256
-#define OFFSET_CACHE_OFFSET 8
-#define OFFSET_CACHE_MASK   0xff
+#define CACHE_ENABLE    true
+#define OFFSET_CACHE_SIZE   64
+#define OFFSET_CACHE_OFFSET 6
+#define OFFSET_CACHE_MASK   0x3f
 #define debug           false
 #define Profile         false
 
@@ -69,7 +68,7 @@ void cacheLoad(cache_line_t* cache, int *offset_port_1,
         len = cache[lineIndex].len;                                                                                         
         offset = cache[lineIndex].offset;                                                                                   
         hitCounter++;                                                                                                       
-        std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
+        // std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
     } else {                                                                                                                
         // Cache miss                                                                                                       
         cache[lineIndex].tag = tag;                                                                                         
@@ -79,7 +78,7 @@ void cacheLoad(cache_line_t* cache, int *offset_port_1,
         len = offset_1 - offset;                                                                                            
         cache[lineIndex].len = len;                                                                                         
         missCounter++;                                                                                                      
-        std::cout <<" offset miss: "<< missCounter <<"  Node index:" << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                  
+        // std::cout <<" offset miss: "<< missCounter <<"  Node index:" << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                  
     }                                                                                                                       
 }
 
@@ -249,7 +248,7 @@ void loadCpyListA ( para_int a_element_in, int512* column_list_1,
 // <2> fetch from off-chip memory (HBM);
 // input:  b_request + column_list_2;
 // output: list_b + b_element_out;
-void loadCpyListB (para_int b_request, int512* column_list_2, int list_b[Parallel][T][BUF_DEPTH], 
+void loadCpyListB (int coalesce_dist, para_int b_request, int512* column_list_2, int list_b[Parallel][T][BUF_DEPTH], 
                    para_int b_element_out[1]) {
 
     para_int b_req_in = b_request;
@@ -293,7 +292,7 @@ void loadCpyListB (para_int b_request, int512* column_list_2, int list_b[Paralle
             int min_temp = hls::min(coalesce_begin, item_begin[t+1]);
             int max_temp = hls::max(coalesce_end, item_end[t+1]);
             int length_temp = max_temp - min_temp;
-            if (length_temp > (coalesce_length + b_req_in.length[t+1] + COALESCE_DIST)) {
+            if (length_temp > (coalesce_length + b_req_in.length[t+1] + coalesce_dist)) {
                 coalesce_flag = false;
             } else {
                 coalesce_flag = true;
@@ -319,9 +318,9 @@ void loadCpyListB (para_int b_request, int512* column_list_2, int list_b[Paralle
                 int512 list_b_temp = column_list_2[ii];
                 for (int tt = 0; tt < Parallel; tt++) {
 #pragma HLS unroll
-                    if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
-                        for (int jj = 0; jj < T; jj++) {
+                    for (int jj = 0; jj < T; jj++) {
 #pragma HLS unroll
+                        if ((ii >= item_begin[tt]) && (ii < item_end[tt])) {
                             list_temp[jj] = list_b_temp.data[jj];
                             list_b[tt][jj][ii - item_begin[tt]] = list_temp[jj];
                         }
@@ -446,15 +445,13 @@ void setIntersection (int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], int li
                      int list_b_offset, int list_b_len, int* tc_num) {
 #pragma HLS inline off
 
-    setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-
-    // if (list_b_len >= (list_a_len << 5)) {
-    //     setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    // } else if (list_a_len >= (list_b_len << 5)) {
-    //     setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
-    // } else {
-    //     setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
-    // }
+    if (list_b_len >= (list_a_len << 5)) {
+        setIntersectionBiSearch(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    } else if (list_a_len >= (list_b_len << 5)) {
+        setIntersectionBiSearch(list_b, list_a, list_b_offset, list_b_len, list_a_offset, list_a_len, tc_num);
+    } else {
+        setIntersectionMerge(list_a, list_b, list_a_offset, list_a_len, list_b_offset, list_b_len, tc_num);
+    }
 }
 
 void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF_DEPTH], 
@@ -530,7 +527,7 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 
 extern "C" {
 void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
-                    int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
+                    int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 32 max_read_burst_length = 16 bundle = gmem0 port = edge_list
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 16 bundle = gmem1 port = offset_list_1
@@ -545,6 +542,7 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS INTERFACE s_axilite port = column_list_1 bundle = control
 #pragma HLS INTERFACE s_axilite port = column_list_2 bundle = control
 #pragma HLS INTERFACE s_axilite port = edge_num bundle = control
+#pragma HLS INTERFACE s_axilite port = dist_coal bundle = control
 #pragma HLS INTERFACE s_axilite port = tc_number bundle = control
 #pragma HLS INTERFACE s_axilite port = return bundle = control
 
@@ -624,12 +622,12 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         if (pp) {
             processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
-            loadCpyListB (b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
             TC_pong += triCount_pong[0];
         } else {
             processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
-            loadCpyListB (b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
             TC_ping += triCount_ping[0];
         }
         pp = 1 - pp;

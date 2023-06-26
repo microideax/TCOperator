@@ -11,8 +11,9 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_kernel.h"
 
-#define PARTITION_NUM 1
-#define USE_REORDER true
+#define PARTITION_NUM   3
+#define USE_REORDER     false
+#define COALESCE_DIST   16
 
 void getTxtSize (std::string file_name, int& lineNum) {
     std::cout << "Getting file size ... " << file_name;
@@ -172,7 +173,7 @@ int main(int argc, char** argv) {
 
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
-        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], resultBuffer[i]);
+        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
     }
 
     for (int i = 0; i < PARTITION_NUM; i++) {
