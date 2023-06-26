@@ -10,7 +10,6 @@
 #define T_offset        4
 #define E_per_burst     8
 #define Parallel        8
-#define COALESCE_DIST   16
 #define CACHE_ENABLE    false
 #define OFFSET_CACHE_SIZE   256
 #define OFFSET_CACHE_OFFSET 8
@@ -184,10 +183,8 @@ void loadOffsetSplit(int length, int* offset_list_1, int* offset_list_2,
 }
 
 void loadOffset(int length, int* offset_list_1, int* offset_list_2,
-                hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
-                hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
+                hls::stream<int512>& eStrmIn, hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
-    int count = 0; // need to identify
 
     para_int a_para;
     para_int b_para;
@@ -239,57 +236,29 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
                 b_length = 0;
             }
 
-            if ((a_length > 0) && (b_length > 0)) {
-                // make sure length > 0
-                a_para.offset[count] = a_offset;
-                a_para.length[count] = a_length;
-                b_para.offset[count] = b_offset;
-                b_para.length[count] = b_length;
-                count ++;
-            }
-
-            if (count == Parallel) {
-                count = 0;
-                StrmA << a_para;
-                StrmB << b_para;
-                ctrlStrm << true; // not the end stream
-                std::cout << "offset output at: " << count << std::endl;
-            }
+            a_para.offset[j] = a_offset;
+            a_para.length[j] = a_length;
+            b_para.offset[j] = b_offset;
+            b_para.length[j] = b_length;
         }
+        StrmA << a_para;
+        StrmB << b_para;
     }
-
-    // process ping-pong corner case;
-    for (int i = count; i < Parallel; i++) {
-        a_para.offset[i] = 0;
-        a_para.length[i] = 0;
-        b_para.offset[i] = 0;
-        b_para.length[i] = 0;
-    }
-    count = 0;
-    StrmA << a_para;
-    StrmB << b_para;
-    ctrlStrm << true; // not the end stream
-    std::cout << "offset output at: " << count << std::endl;
-    StrmA << a_para;
-    StrmB << b_para;
-    ctrlStrm << false; // end stream: the last stream
 }
 
 // listTaskSplitter function takes the streams from the loadOffset function and split them into small tasks for the following loadCpyListA and loadCpyListB functions
-void elistTaskSplitter(hls::stream<bool>& ctrlStrm,
-                    hls::stream<para_int>& StrmA,
-                    hls::stream<para_int>& StrmB,
+void elistTaskSplitter (int length, hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB,
                     // output split streams
                     hls::stream<bool>& ctrlStrmOut,
                     hls::stream<para_int>& StrmAOut,
                     hls::stream<para_int>& StrmBOut
                     ){
+    int loop = (length + T - 1) / T;
     
     para_int a_para_i;
     para_int b_para_i;
-    bool ctrl_para_i;
     para_int a_para_o;
-    para_int b_para_o;  
+    para_int b_para_o;
     bool ctrl_para_o;
 
 #pragma HLS DATA_PACK variable=a_para_o
@@ -301,73 +270,52 @@ void elistTaskSplitter(hls::stream<bool>& ctrlStrm,
 
     int count = 0;
     
-    while (1){
-        ctrl_para_i = ctrlStrm.read();
+    for (int i = 0; i < loop; i++) {
         a_para_i = StrmA.read();
         b_para_i = StrmB.read();
-        std::cout << "offset input at: " << count << std::endl;
-        // std::cout << count << std::endl;
-        if(ctrl_para_i == true) {
-            for(int i = 0; i < Parallel; i++){
-                int a_offset_i = a_para_i.offset[i];
-                int a_length_i = a_para_i.length[i];
-                int b_offset_i = b_para_i.offset[i];
-                int b_length_i = b_para_i.length[i];
-                std::cout << "current workload: " << a_offset_i << " " << a_length_i << " " << b_offset_i << " " << b_length_i << std::endl;
-                for (int k = 0; k < (a_length_i + L_LEN -1)/L_LEN; k++){
-    #pragma HLS pipeline                
-                    // std::cout << "k: " << k << std::endl;
+        for (int j = 0; j < E_per_burst; j++) {
+            int a_offset_i = a_para_i.offset[j];
+            int a_length_i = a_para_i.length[j];
+            int b_offset_i = b_para_i.offset[j];
+            int b_length_i = b_para_i.length[j];
+            if ((a_length_i > 0) && (b_length_i > 0)) { // filter len = 0;
+                for (int k = 0; k < (a_length_i + L_LEN -1)/L_LEN; k++) { // a split 
+            #pragma HLS pipeline
                     int a_offset_tmp = a_offset_i + k*L_LEN;
                     int a_length_tmp = ((a_length_i - k*L_LEN) < L_LEN) ? (a_length_i - k*L_LEN) : L_LEN;
-                    for (int l = 0; l < (b_length_i + L_LEN - 1)/L_LEN; l++){
+                    for (int l = 0; l < (b_length_i + L_LEN - 1)/L_LEN; l++) { // b split
                         a_para_o.offset[count] = a_offset_tmp;
                         a_para_o.length[count] = a_length_tmp;
                         int b_offset_tmp = b_offset_i + l*L_LEN;
                         int b_length_tmp = ((b_length_i - l*L_LEN) < L_LEN) ? (b_length_i - l*L_LEN) : L_LEN;
                         b_para_o.offset[count] = b_offset_tmp;
                         b_para_o.length[count] = b_length_tmp;
-                
-                        // std::cout << "a_offset: " << a_para.offset[count] << " a_length: " << a_para.length[count] << " b_offset: " << b_para.offset[count] << " b_length: " << b_para.length[count] << std::endl;  
-                        // std::cout << "count: " << count << std::endl;
+
                         count ++;
                         if (count == Parallel) {
                             count = 0;
                             StrmAOut << a_para_o;
                             StrmBOut << b_para_o;
                             ctrlStrmOut << true; // not the end stream
-                            // std::cout << "output at: " << count << std::endl;
                         }
                     }
                 }
             }
-            // process ping-pong corner case;
-            for (int i = count; i < Parallel; i++) {
-                a_para_o.offset[i] = 0;
-                a_para_o.length[i] = 0;
-                b_para_o.offset[i] = 0;
-                b_para_o.length[i] = 0;
-            }
-            count = 0;
-            StrmAOut << a_para_o;
-            StrmBOut << b_para_o;
-            ctrlStrmOut << true; // not the end stream
-        }
-        else {
-            // process ping-pong corner case;
-            for (int i = count; i < Parallel; i++) {
-                a_para_o.offset[i] = 0;
-                a_para_o.length[i] = 0;
-                b_para_o.offset[i] = 0;
-                b_para_o.length[i] = 0;
-            }
-            StrmAOut << a_para_o;
-            StrmBOut << b_para_o;
-            ctrlStrmOut << false; // end stream: the last stream
-            std::cout << "end while stream!" << std::endl;
-            break;
         }
     }
-    std::cout << "Finished elistTaskSplitter" << std::endl;
+
+    for (int i = count; i < Parallel; i++) {
+        a_para_o.offset[i] = 0;
+        a_para_o.length[i] = 0;
+        b_para_o.offset[i] = 0;
+        b_para_o.length[i] = 0;
+    }
+    StrmAOut << a_para_o;
+    StrmBOut << b_para_o;
+    ctrlStrmOut << true; // not the end stream
+    StrmAOut << a_para_o;
+    StrmBOut << b_para_o;
+    ctrlStrmOut << false; // end stream
 }
 
 // loadCpyListA function contains :  
@@ -447,7 +395,7 @@ void loadCpyListA ( para_int a_element_in, int512* column_list_1,
 // <2> fetch from off-chip memory (HBM);
 // input:  b_request + column_list_2;
 // output: list_b + b_element_out;
-void loadCpyListB (para_int b_request, int512* column_list_2, int list_b[Parallel][T][BUF_DEPTH], 
+void loadCpyListB (int dist_coal, para_int b_request, int512* column_list_2, int list_b[Parallel][T][BUF_DEPTH], 
                    para_int b_element_out[1]) {
 
     para_int b_req_in = b_request;
@@ -491,7 +439,7 @@ void loadCpyListB (para_int b_request, int512* column_list_2, int list_b[Paralle
             int min_temp = hls::min(coalesce_begin, item_begin[t+1]);
             int max_temp = hls::max(coalesce_end, item_end[t+1]);
             int length_temp = max_temp - min_temp;
-            if (length_temp > (coalesce_length + b_req_in.length[t+1] + COALESCE_DIST)) {
+            if (length_temp > (coalesce_length + b_req_in.length[t+1] + dist_coal)) {
                 coalesce_flag = false;
             } else {
                 coalesce_flag = true;
@@ -728,7 +676,7 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 
 extern "C" {
 void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
-                    int512* column_list_1, int512* column_list_2, int edge_num, int* tc_number ) {
+                    int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 32 max_read_burst_length = 16 bundle = gmem0 port = edge_list
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 16 bundle = gmem1 port = offset_list_1
@@ -743,6 +691,7 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
 #pragma HLS INTERFACE s_axilite port = column_list_1 bundle = control
 #pragma HLS INTERFACE s_axilite port = column_list_2 bundle = control
 #pragma HLS INTERFACE s_axilite port = edge_num bundle = control
+#pragma HLS INTERFACE s_axilite port = dist_coal bundle = control
 #pragma HLS INTERFACE s_axilite port = tc_number bundle = control
 #pragma HLS INTERFACE s_axilite port = return bundle = control
 
@@ -804,9 +753,8 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     int length = edge_num*2;
 
     loadEdgeList (length, edge_list, edgeStrm);
-    loadOffset (length, offset_list_1, offset_list_2, edgeStrm, 
-                ctrlStrm, offLenStrmA, offLenStrmB);
-    elistTaskSplitter(ctrlStrm, offLenStrmA, offLenStrmB, 
+    loadOffset (length, offset_list_1, offset_list_2, edgeStrm, offLenStrmA, offLenStrmB);
+    elistTaskSplitter(length, offLenStrmA, offLenStrmB, 
                       ctrlStrmS, offLenStrmAS, offLenStrmBS);
 
     int pp = 0; // ping-pong operation
@@ -833,12 +781,12 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         if (pp) {
             processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
-            loadCpyListB (b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
             TC_pong += triCount_pong[0];
         } else {
             processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
             loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
-            loadCpyListB (b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
             TC_ping += triCount_ping[0];
         }
         pp = 1 - pp;

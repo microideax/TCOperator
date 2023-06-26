@@ -11,7 +11,7 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_kernel.h"
 
-#define PARTITION_NUM   3
+#define PARTITION_NUM   1
 #define USE_REORDER     false
 #define COALESCE_DIST   16
 
