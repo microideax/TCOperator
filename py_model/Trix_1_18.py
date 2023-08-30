@@ -56,7 +56,8 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
 ## filename = './datasets/amazon0601.mtx' ## seem our method performs better in amamzon dataset
 ## filename = './datasets/roadNet-CA.txt'
 ## filename = './datasets/ca-cit-HepPh.edges'
-filename = './datasets/cit-Patents.txt'
+dataset_name = "amazon0302"
+filename = "../datasets/" + dataset_name + ".mtx"
 
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
@@ -97,6 +98,9 @@ print (dest_array)
 global _shared_array
 _shared_array = txt_array
 
+edge_name = "./" + dataset_name + "_edge.txt"
+np.savetxt(edge_name, txt_array, fmt='%d', delimiter=' ')
+
 print("Load data done ")
 ## ======= load data done =======
 
@@ -105,14 +109,17 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 8 ## can be set a variable, equals to thread numbers.
+partition_num = 4 ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):
-    index_t = np.int32(len(txt_array)*(i+1)/partition_num)
-    abs_array = np.absolute(dest_array - index_t)
-    partition_index[i+1] = abs_array.argmin() + 1
-    ## partition_index[i+1] = np.int32((adj_matrix_dim)*(i+1)/partition_num)
+    ## cut edge num evenly
+    # index_t = np.int32(len(txt_array)*(i+1)/partition_num)
+    # abs_array = np.absolute(dest_array - index_t)
+    # partition_index[i+1] = abs_array.argmin() + 1
+
+    ## cut edge by index
+    partition_index[i+1] = np.int32((adj_matrix_dim)*(i+1)/partition_num)
     ## partition_index[i+1] = np.int32(adj_matrix_dim*(math.pow(0.717, partition_num-1-i)))
 partition_index[partition_num] = adj_matrix_dim
 print("partition index array ", partition_index)
@@ -126,6 +133,9 @@ for i in range(partition_num):
 
 process_pool.close()
 process_pool.join()
+
+t_partition_end = perf_counter()
+print("our partition execution elapses ", t_partition_end - t_partition_start)
 
 graph_csr_row = []
 graph_csr_col = []
@@ -148,10 +158,15 @@ result = 0
 for i in range(partition_num):
     result += int(final_result_pool[i].get())
 
-t_partition_end = perf_counter()
-print("our code execution elapses ", t_partition_end - t_partition_start)
+t_process_end = perf_counter()
+print("our overall code execution elapses ", t_process_end - t_partition_start)
 print(result)
 
+for i in range(partition_num):
+    row_name = "./" + dataset_name + "_row_" + str(i) + ".txt"
+    np.savetxt(row_name, graph_csr_row[i], fmt='%d', delimiter=' ')
+    col_name = "./" + dataset_name + "_col_" + str(i) + ".txt"
+    np.savetxt(col_name, graph_csr_col[i], fmt='%d', delimiter=' ')
 
 
 #### golden test

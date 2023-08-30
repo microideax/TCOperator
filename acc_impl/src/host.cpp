@@ -11,7 +11,7 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_kernel.h"
 
-#define PARTITION_NUM   1
+#define PARTITION_NUM   4
 #define USE_REORDER     false
 #define COALESCE_DIST   16
 
@@ -109,7 +109,8 @@ int main(int argc, char** argv) {
     }
 
     int columnNum, offsetNum;
-    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt";
+    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row_double.txt";
+    // name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt";
     getTxtSize(name, offsetNum);
     name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt";
     getTxtSize(name, columnNum);
@@ -143,7 +144,8 @@ int main(int argc, char** argv) {
         size_bytes = offsetNum * sizeof(int);
         offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
         offsetList[i] = offsetBuffer[i].map<int*>();
-        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
+        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row_double.txt", offsetList[i], offsetNum, false);
+        // getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
     }
 
     std::cout << "synchronize input buffer data to device global memory\n";

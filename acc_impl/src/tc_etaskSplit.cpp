@@ -5,19 +5,21 @@
 #include <iostream>
 #include <algorithm>
 
-#define BUF_DEPTH       2
+// the BUF_DEPTH is related to L_LEN; please take care
+#define BUF_DEPTH       4
 #define T               16
 #define T_offset        4
 #define E_per_burst     8
 #define Parallel        8
-#define CACHE_ENABLE    false
+#define CACHE_ENABLE    true
 #define OFFSET_CACHE_SIZE   256
 #define OFFSET_CACHE_OFFSET 8
 #define OFFSET_CACHE_MASK   0xff
 #define debug           false
 #define Profile         false
-#define L_LEN           16
+#define L_LEN           32
 
+typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
 typedef struct data_custom_type {
     int offset[Parallel];
@@ -56,7 +58,7 @@ int getTag (int value) { return value >> OFFSET_CACHE_OFFSET;}
 
 int getIndex (int value) { return value & OFFSET_CACHE_MASK;}
 
-void cacheLoad(cache_line_t* cache, int *offset_port_1,                                                                     
+void cacheLoad(cache_line_t* cache, int64 *offset_port_1,                                                                     
                  int nodeIndex, int& offset, int& len,                                                                       
                  int& hitCounter, int& missCounter) {                                                 
 #pragma HLS inline                                                                                                          
@@ -69,120 +71,24 @@ void cacheLoad(cache_line_t* cache, int *offset_port_1,
         len = cache[lineIndex].len;                                                                                         
         offset = cache[lineIndex].offset;                                                                                   
         hitCounter++;                                                                                                       
-        std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
+        // std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
     } else {                                                                                                                
-        // Cache miss                                                                                                       
-        cache[lineIndex].tag = tag;                                                                                         
-        offset = offset_port_1[nodeIndex];                                                                                  
-        offset_1 = offset_port_1[nodeIndex+1];                                                                              
-        cache[lineIndex].offset = offset;                                                                                   
-        len = offset_1 - offset;                                                                                            
-        cache[lineIndex].len = len;                                                                                         
-        missCounter++;                                                                                                      
-        std::cout <<" offset miss: "<< missCounter <<"  Node index:" << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                  
-    }                                                                                                                       
+        // Cache miss 
+        cache[lineIndex].tag = tag;
+        int64 temp_value = offset_port_1[nodeIndex];
+        offset = temp_value.data[0];
+        offset_1 = temp_value.data[1];
+        // offset = offset_port_1[nodeIndex];
+        // offset_1 = offset_port_1[nodeIndex+1];
+        cache[lineIndex].offset = offset;
+        len = offset_1 - offset;
+        cache[lineIndex].len = len;
+        missCounter++;
+        // std::cout <<" offset miss: "<< missCounter <<"  Node index:" << nodeIndex << " Line index: " << lineIndex << std::endl;
+    }
 }
 
-void loadOffsetSplit(int length, int* offset_list_1, int* offset_list_2,
-                hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
-                hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
-    int loop = (length + T - 1) / T;
-    int count = 0; // need to identify
-
-    para_int a_para;
-    para_int b_para;
-#pragma HLS DATA_PACK variable=a_para
-#pragma HLS ARRAY_PARTITION variable=a_para.offset complete dim=1
-#pragma HLS ARRAY_PARTITION variable=a_para.length complete dim=1
-#pragma HLS DATA_PACK variable=b_para
-#pragma HLS ARRAY_PARTITION variable=b_para.offset complete dim=1
-#pragma HLS ARRAY_PARTITION variable=b_para.length complete dim=1
-
-#if CACHE_ENABLE==true
-    cache_line_t cache_a[OFFSET_CACHE_SIZE];
-    cache_line_t cache_b[OFFSET_CACHE_SIZE];
-
-// offset cache initialize
-    for (int i = 0; i < OFFSET_CACHE_SIZE; i++) {
-#pragma HLS pipeline ii = 1
-        cache_a[i].tag = -1;
-        cache_b[i].tag = -1;
-    }
-#endif
-
-    for (int i = 0; i < loop; i++) {
-        int512 edge_value = eStrmIn.read();
-#pragma HLS array_partition variable=edge_value type=complete dim=1
-
-        int a_value, a_offset, a_length;
-        int b_value, b_offset, b_length;
-        for (int j = 0; j < E_per_burst; j++) {
-#pragma HLS pipeline
-            if (i*T + 2*j < length) {
-                a_value = edge_value.data[j*2];
-                b_value = edge_value.data[j*2 + 1];
-
-#if CACHE_ENABLE==true
-                cacheLoad(cache_a, offset_list_1, a_value, a_offset, a_length, a_cacheHits, a_cacheMisses);
-                cacheLoad(cache_b, offset_list_2, b_value, b_offset, b_length, b_cacheHits, b_cacheMisses);
-#else
-                a_offset = offset_list_1[a_value];
-                a_length = offset_list_1[a_value + 1] - a_offset;
-                b_offset = offset_list_2[b_value];
-                b_length = offset_list_2[b_value + 1] - b_offset;
-#endif
-
-            } else {
-                a_offset = 0;
-                a_length = 0;
-                b_offset = 0;
-                b_length = 0;
-            }
-
-            if ((a_length > 0) && (b_length > 0)) {
-                // std::cout << "a_offset: " << a_offset << " a_length: " << a_length << " b_offset: " << b_offset << " b_length: " << b_length << std::endl;  
-                for (int k = 0; k < (a_length + L_LEN -1)/L_LEN; k++){
-                    int a_offset_tmp = a_offset + k*L_LEN;
-                    int a_length_tmp = ((a_length - k*L_LEN) < L_LEN) ? (a_length - k*L_LEN) : L_LEN;
-                    for (int l = 0; l < (b_length + L_LEN - 1)/L_LEN; l++){
-#pragma HLS pipeline
-                        a_para.offset[count] = a_offset_tmp;
-                        a_para.length[count] = a_length_tmp;
-                        b_para.offset[count] = b_offset + l*L_LEN;
-                        b_para.length[count] = ((b_length - l*L_LEN) < L_LEN) ? (b_length - l*L_LEN) : L_LEN;
-                
-                        // std::cout << "a_offset: " << a_para.offset[count] << " a_length: " << a_para.length[count] << " b_offset: " << b_para.offset[count] << " b_length: " << b_para.length[count] << std::endl;  
-                        // std::cout << "count: " << count << std::endl;
-                        count ++;
-                        if (count == Parallel) {
-                            count = 0;
-                            StrmA << a_para;
-                            StrmB << b_para;
-                            ctrlStrm << true; // not the end stream
-                            // std::cout << "output at: " << count << std::endl;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // process ping-pong corner case;
-    for (int i = count; i < Parallel; i++) {
-        a_para.offset[i] = 0;
-        a_para.length[i] = 0;
-        b_para.offset[i] = 0;
-        b_para.length[i] = 0;
-    }
-    StrmA << a_para;
-    StrmB << b_para;
-    ctrlStrm << true; // not the end stream
-    StrmA << a_para;
-    StrmB << b_para;
-    ctrlStrm << false; // end stream: the last stream
-}
-
-void loadOffset(int length, int* offset_list_1, int* offset_list_2,
+void loadOffset(int length, int64* offset_list_1, int64* offset_list_2,
                 hls::stream<int512>& eStrmIn, hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
 
@@ -675,7 +581,7 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 
 
 extern "C" {
-void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
+void TriangleCount (int512* edge_list, int64* offset_list_1, int64* offset_list_2, \
                     int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 32 max_read_burst_length = 16 bundle = gmem0 port = edge_list
@@ -799,7 +705,7 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
     std::cout << "Parallel size = " << Parallel << std::endl;
     std::cout << "hit_count_list_a = " << hit_count_list_a << std::endl;
     std::cout << "miss_count_list_a = " << miss_count_list_a << std::endl;
-    std::cout << "memory_access_a = " << memory_access_a << std::endl;;
+    std::cout << "memory_access_a = " << memory_access_a << std::endl;
     std::cout << "memory_access_b = " << memory_access_b << std::endl;
     std::cout << "data_amount_off_chip_a = " << data_amount_off_chip_a << std::endl;
     std::cout << "data_amount_off_chip_b = " << data_amount_off_chip_b << std::endl;

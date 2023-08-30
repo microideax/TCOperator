@@ -17,6 +17,7 @@
 #define debug           false
 #define Profile         false
 
+typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
 typedef struct data_custom_type {
     int offset[Parallel];
@@ -55,7 +56,7 @@ int getTag (int value) { return value >> OFFSET_CACHE_OFFSET;}
 
 int getIndex (int value) { return value & OFFSET_CACHE_MASK;}
 
-void cacheLoad(cache_line_t* cache, int *offset_port_1,                                                                     
+void cacheLoad(cache_line_t* cache, int64 *offset_port_1,                                                                     
                  int nodeIndex, int& offset, int& len,                                                                       
                  int& hitCounter, int& missCounter) {                                                 
 #pragma HLS inline                                                                                                          
@@ -71,9 +72,10 @@ void cacheLoad(cache_line_t* cache, int *offset_port_1,
         // std::cout <<" offset hit: " << hitCounter << "  Node index: " << nodeIndex << " Line index: " << lineIndex<<     std::endl;                                                                                                                 
     } else {                                                                                                                
         // Cache miss                                                                                                       
-        cache[lineIndex].tag = tag;                                                                                         
-        offset = offset_port_1[nodeIndex];                                                                                  
-        offset_1 = offset_port_1[nodeIndex+1];                                                                              
+        cache[lineIndex].tag = tag;
+        int64 temp_value = offset_port_1[nodeIndex];
+        offset = temp_value.data[0];
+        offset_1 = temp_value.data[1];                                                                      
         cache[lineIndex].offset = offset;                                                                                   
         len = offset_1 - offset;                                                                                            
         cache[lineIndex].len = len;                                                                                         
@@ -82,7 +84,7 @@ void cacheLoad(cache_line_t* cache, int *offset_port_1,
     }                                                                                                                       
 }
 
-void loadOffset(int length, int* offset_list_1, int* offset_list_2,
+void loadOffset(int length, int64* offset_list_1, int64* offset_list_2,
                 hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
                 hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
@@ -125,10 +127,12 @@ void loadOffset(int length, int* offset_list_1, int* offset_list_2,
                 cacheLoad(cache_a, offset_list_1, a_value, a_offset, a_length, a_cacheHits, a_cacheMisses);
                 cacheLoad(cache_b, offset_list_2, b_value, b_offset, b_length, b_cacheHits, b_cacheMisses);
 #else
-                a_offset = offset_list_1[a_value];
-                a_length = offset_list_1[a_value + 1] - a_offset;
-                b_offset = offset_list_2[b_value];
-                b_length = offset_list_2[b_value + 1] - b_offset;
+                int64 temp_a = offset_list_1[a_value];
+                a_offset = temp_a.data[0];
+                a_length = temp_a.data[1] - a_offset;
+                int64 temp_b = offset_list_2[b_value];
+                b_offset = temp_b.data[0];
+                b_length = temp_b.data[1] - b_offset;
 #endif
 
             } else {
@@ -526,7 +530,7 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 
 
 extern "C" {
-void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
+void TriangleCount (int512* edge_list, int64* offset_list_1, int64* offset_list_2, \
                     int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 32 max_read_burst_length = 16 bundle = gmem0 port = edge_list
@@ -619,18 +623,18 @@ void TriangleCount (int512* edge_list, int* offset_list_1, int* offset_list_2, \
         para_int a_ele_in = offLenStrmA.read();
         para_int b_ele_in = offLenStrmB.read();
 
-        if (pp) {
-            processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
-            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
-            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
-            TC_pong += triCount_pong[0];
-        } else {
-            processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
-            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
-            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
-            TC_ping += triCount_ping[0];
-        }
-        pp = 1 - pp;
+        // if (pp) {
+        //     processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
+        //     loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
+        //     loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
+        //     TC_pong += triCount_pong[0];
+        // } else {
+        //     processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
+        //     loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
+        //     loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
+        //     TC_ping += triCount_ping[0];
+        // }
+        // pp = 1 - pp;
 
         if (strm_control == false) {
             break;
