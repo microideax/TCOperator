@@ -29,12 +29,18 @@ def partion_multi_process (processID, graph_array, index_list, length):
     temp_list = temp_list[np.lexsort([temp_list.T[0]])] ## sort array by incremental order
 
     csr_row = np.add.accumulate(csr_row)
+    ## add row double for 64 bit access.
+    csr_row_double = np.zeros((2*(len(csr_row) - 1)), dtype = np.int32)
+    for i in range((len(csr_row) - 1)):
+        csr_row_double[i*2] = csr_row[i]
+        csr_row_double[i*2 + 1] = csr_row[i+1]
+
     csr_col = temp_list[:, 1]
 
     t_m_e = perf_counter() - t_m_p
     print("partition finish, time : ", t_m_e)
     
-    return csr_row, csr_col
+    return csr_row, csr_row_double, csr_col
 
 
 ## multi-processors processing
@@ -56,8 +62,8 @@ def intersection_multi_process (processID, graph_array, csr_row, csr_col):
 ## filename = './datasets/amazon0601.mtx' ## seem our method performs better in amamzon dataset
 ## filename = './datasets/roadNet-CA.txt'
 ## filename = './datasets/ca-cit-HepPh.edges'
-dataset_name = "amazon0302"
-filename = "../datasets/" + dataset_name + ".mtx"
+dataset_name = "facebook_combined"
+filename = "../datasets/" + dataset_name + ".txt"
 
 print("Load data from hard-disk ... ")
 txt_array_t = np.int64(np.loadtxt(filename))
@@ -109,7 +115,10 @@ print("Load data done ")
 t_partition_start = perf_counter()
 adj_matrix_dim = np.int64(txt_array.max()) + 1 ## get the max id for csr row size
 print ("vertex range : 0 -", adj_matrix_dim, end = " ")
-partition_num = 4 ## can be set a variable, equals to thread numbers.
+
+## get the max outdegree number
+partition_interval = 16
+partition_num = (adj_matrix_dim + partition_interval - 1) // partition_interval ## can be set a variable, equals to thread numbers.
 print ("using process number :", partition_num)
 partition_index = np.zeros(partition_num + 1, dtype=np.int32)
 for i in range(partition_num - 1):
@@ -138,12 +147,14 @@ t_partition_end = perf_counter()
 print("our partition execution elapses ", t_partition_end - t_partition_start)
 
 graph_csr_row = []
+graph_csr_double_row = []
 graph_csr_col = []
 
 for i in range(partition_num):
-    temp_a, temp_b = result_pool[i].get()
+    temp_a, temp_b, temp_c = result_pool[i].get()
     graph_csr_row.append(temp_a)
-    graph_csr_col.append(temp_b)
+    graph_csr_double_row.append(temp_b)
+    graph_csr_col.append(temp_c)
     ## print(result_pool[i].get())
 
 intersection_pool = Pool(partition_num)
@@ -163,9 +174,11 @@ print("our overall code execution elapses ", t_process_end - t_partition_start)
 print(result)
 
 for i in range(partition_num):
-    row_name = "./" + dataset_name + "_row_" + str(i) + ".txt"
+    row_name = "./output_file/" + dataset_name + "_row_" + str(i) + ".txt"
     np.savetxt(row_name, graph_csr_row[i], fmt='%d', delimiter=' ')
-    col_name = "./" + dataset_name + "_col_" + str(i) + ".txt"
+    row_name = "./output_file/" + dataset_name + "_row_double_" + str(i) + ".txt"
+    np.savetxt(row_name, graph_csr_double_row[i], fmt='%d', delimiter=' ')
+    col_name = "./output_file/" + dataset_name + "_col_" + str(i) + ".txt"
     np.savetxt(col_name, graph_csr_col[i], fmt='%d', delimiter=' ')
 
 

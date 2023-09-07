@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
     offsetList.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
         int size_bytes = columnNum[i] * sizeof(int);
-        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
+        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(2));
         columnList[i] = columnBuffer[i].map<int*>();
         getTxtContent(columnName[i], columnList[i], columnNum[i], false);
 
@@ -188,7 +188,9 @@ int main(int argc, char** argv) {
 
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
-        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        // krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        // krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer_2[i], columnBuffer[i], columnBuffer_2[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
     }
 
     for (int i = 0; i < PARTITION_NUM; i++) {

@@ -95,7 +95,7 @@ CXXFLAGS += -I$(XF_PROJ_ROOT)/common/includes/bitmap
 CXXFLAGS += -I$(XF_PROJ_ROOT)/common/includes/cmdparser
 CXXFLAGS += -I$(XF_PROJ_ROOT)/common/includes/logger
 HOST_SRCS += $(XF_PROJ_ROOT)/common/includes/xcl2/xcl2.cpp $(XF_PROJ_ROOT)/common/includes/bitmap/bitmap.cpp
-HOST_SRCS += $(XF_PROJ_ROOT)/common/includes/cmdparser/cmdlineparser.cpp $(XF_PROJ_ROOT)/common/includes/logger/logger.cpp ./src/host_adj.cpp 
+HOST_SRCS += $(XF_PROJ_ROOT)/common/includes/cmdparser/cmdlineparser.cpp $(XF_PROJ_ROOT)/common/includes/logger/logger.cpp ./src/host_adj_serial.cpp 
 # Host compiler global settings
 CXXFLAGS += -fmessage-length=0
 LDFLAGS += -lrt -lstdc++ 
@@ -139,7 +139,7 @@ xclbin: build
 
 VPP_LDFLAGS_krnl_tc += --config ./krnl_tc.cfg
 ############################## Setting Rules for Binary Containers (Building Kernels) ##############################
-$(TEMP_DIR)/tc.xo: src/tc_etaskSplit.cpp
+$(TEMP_DIR)/tc.xo: src/tc_single_core.cpp
 ## $(TEMP_DIR)/tc.xo: src/tc_etaskSplit_offset64.cpp
 	mkdir -p $(TEMP_DIR)
 	$(VPP) $(VPP_FLAGS) -c -k TriangleCount --temp_dir $(TEMP_DIR)  -I'$(<D)' -o'$@' '$<'
