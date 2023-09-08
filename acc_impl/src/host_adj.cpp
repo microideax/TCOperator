@@ -94,28 +94,39 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "load graph dataset" << std::endl;
-    std::cout << "Read edge file ... " << std::endl;
-    std::vector<std::string> edgeName;
+
     std::vector<int> edgeNum;
-    edgeName.resize(PARTITION_NUM);
+    std::string edgeName;
     edgeNum.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
-#if USE_REORDER==true
-        edgeName[i] = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_edge_reorder_" + std::to_string(i) + ".txt";
-#else
-        edgeName[i] = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_edge_" + std::to_string(i) + ".txt";
-#endif
-        getTxtSize(edgeName[i], edgeNum[i]);
+        edgeName = "./dataset_adj_" + std::to_string(PARTITION_NUM) + "_pe/" + datasetName + "_edge.txt";
+        getTxtSize(edgeName, edgeNum[i]);
     }
 
-    int columnNum, offsetNum;
-    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row_double.txt";
-    // name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt";
-    getTxtSize(name, offsetNum);
-    name = "./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt";
-    getTxtSize(name, columnNum);
+    std::vector<int> columnNum;
+    std::vector<int> offsetNum;
+    std::vector<std::string> columnName;
+    std::vector<std::string> offsetName;
+    columnNum.resize(PARTITION_NUM);
+    offsetNum.resize(PARTITION_NUM);
+    columnName.resize(PARTITION_NUM);
+    offsetName.resize(PARTITION_NUM);
+
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        std::string offset_name_t = "./dataset_adj_" + std::to_string(PARTITION_NUM) + "_pe/" + datasetName + "_row_double_" + std::to_string(i) + ".txt";
+        std::string column_name_t = "./dataset_adj_" + std::to_string(PARTITION_NUM) + "_pe/" + datasetName + "_col_" + std::to_string(i) + ".txt";
+
+        int offset_num_t = 0, column_num_t = 0;
+        getTxtSize(offset_name_t, offset_num_t);
+        getTxtSize(column_name_t, column_num_t);
+        columnNum[i] = column_num_t;
+        offsetNum[i] = offset_num_t;
+        columnName[i] = column_name_t;
+        offsetName[i] = offset_name_t;
+    }
 
     std::cout << " allocate memory in device" << std::endl;
+
     std::vector<xrt::bo> edgeBuffer;
     std::vector<int*> edgeList;
     edgeBuffer.resize(PARTITION_NUM);
@@ -124,7 +135,7 @@ int main(int argc, char** argv) {
         int edge_size_bytes = edgeNum[i] * 2 * sizeof(int);
         edgeBuffer[i] = xrt::bo(device, edge_size_bytes, tc_krnl[i].group_id(0));
         edgeList[i] = edgeBuffer[i].map<int*>();
-        getTxtContent(edgeName[i], edgeList[i], edgeNum[i], true);
+        getTxtContent(edgeName, edgeList[i], edgeNum[i], true);
     }
 
     std::vector<xrt::bo> columnBuffer;
@@ -136,30 +147,17 @@ int main(int argc, char** argv) {
     columnList.resize(PARTITION_NUM);
     offsetList.resize(PARTITION_NUM);
     for (int i = 0; i < PARTITION_NUM; i++) {
-        int size_bytes = columnNum * sizeof(int);
-        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(3));
+        int size_bytes = columnNum[i] * sizeof(int);
+        columnBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(2));
         columnList[i] = columnBuffer[i].map<int*>();
-        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_col.txt", columnList[i], columnNum, false);
+        getTxtContent(columnName[i], columnList[i], columnNum[i], false);
 
-        size_bytes = offsetNum * sizeof(int);
+        size_bytes = offsetNum[i] * sizeof(int);
         offsetBuffer[i] = xrt::bo(device, size_bytes, tc_krnl[i].group_id(1));
         offsetList[i] = offsetBuffer[i].map<int*>();
-        getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row_double.txt", offsetList[i], offsetNum, false);
-        // getTxtContent("./dataset_" + std::to_string(PARTITION_NUM) + "pe/" + datasetName + "_row.txt", offsetList[i], offsetNum, false);
+        getTxtContent(offsetName[i], offsetList[i], offsetNum[i], false);
     }
 
-    std::cout << "synchronize input buffer data to device global memory\n";
-    auto start_pcie = std::chrono::steady_clock::now();
-    for (int i = 0; i < PARTITION_NUM; i++) {
-        edgeBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        columnBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        offsetBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    }
-    auto end_pcie = std::chrono::steady_clock::now();
-    std::chrono::duration<double> elapsed_data_transfer = end_pcie-start_pcie;
-    std::cout << "PCIe time = " << elapsed_data_transfer.count() << std::endl;
-
-    std::cout << "Execution of the kernel\n";
     int TcNum = 0;
     std::vector<xrt::bo> resultBuffer;
     std::vector<int*> result;
@@ -171,11 +169,28 @@ int main(int argc, char** argv) {
     for (int i = 0; i < PARTITION_NUM; i++) {
         resultBuffer[i] = xrt::bo(device, sizeof(int), tc_krnl[i].group_id(0));
         result[i] = resultBuffer[i].map<int*>();
+        result[i][0] = 0;
     }
+
+    std::cout << "synchronize input buffer data to device global memory\n";
+    auto start_pcie = std::chrono::steady_clock::now();
+    for (int i = 0; i < PARTITION_NUM; i++) {
+        columnBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        offsetBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        edgeBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        resultBuffer[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    }
+    auto end_pcie = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed_data_transfer = end_pcie-start_pcie;
+    std::cout << "PCIe time = " << elapsed_data_transfer.count() << std::endl;
+
+    std::cout << "Execution of the kernel\n";
 
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < PARTITION_NUM; i++) {
-        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        // krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer[i], columnBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        // krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], offsetBuffer_2[i], columnBuffer[i], columnBuffer_2[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
+        krnl_run[i] = tc_krnl[i](edgeBuffer[i], offsetBuffer[i], columnBuffer[i], edgeNum[i], COALESCE_DIST, resultBuffer[i]);
     }
 
     for (int i = 0; i < PARTITION_NUM; i++) {

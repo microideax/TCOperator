@@ -10,7 +10,7 @@ from multiprocessing import Process, Pool
 import math
 
 
-partition_num = 1 ## can be set a variable, equals to thread numbers.
+partition_num = 4 ## can be set a variable, equals to thread numbers.
 ## dataset_name = 'as-skitter' ## .txt
 ## dataset_name = 'ca-cit-HepPh' ## .edges
 ## dataset_name = 'facebook_combined' ## .txt
