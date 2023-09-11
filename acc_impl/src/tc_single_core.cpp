@@ -581,16 +581,18 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 
 
 extern "C" {
-void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list, int edge_num, int dist_coal, int* tc_number ) {
+void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 32 max_read_burst_length = 16 bundle = gmem0 port = edge_list
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 64 bundle = gmem1 port = offset_list
-#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 64 bundle = gmem2 port = column_list
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 64 bundle = gmem2 port = column_list_1
+#pragma HLS INTERFACE m_axi offset = slave latency = 16 num_read_outstanding = 16 max_read_burst_length = 64 bundle = gmem2 port = column_list_2
 #pragma HLS INTERFACE m_axi offset = slave latency = 16 num_write_outstanding = 4 max_write_burst_length = 2 bundle = gmem0 port = tc_number
 
 #pragma HLS INTERFACE s_axilite port = edge_list bundle = control
 #pragma HLS INTERFACE s_axilite port = offset_list bundle = control
-#pragma HLS INTERFACE s_axilite port = column_list bundle = control
+#pragma HLS INTERFACE s_axilite port = column_list_1 bundle = control
+#pragma HLS INTERFACE s_axilite port = column_list_2 bundle = control
 #pragma HLS INTERFACE s_axilite port = edge_num bundle = control
 #pragma HLS INTERFACE s_axilite port = dist_coal bundle = control
 #pragma HLS INTERFACE s_axilite port = tc_number bundle = control
@@ -681,13 +683,13 @@ void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list, 
 
         if (pp) {
             processList (list_a_ping, list_b_ping, a_ele_out_pong, b_ele_out_pong, triCount_pong);
-            loadCpyListA (a_ele_in, column_list, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
-            loadCpyListB (dist_coal, b_ele_in, column_list, list_b_pong, b_ele_out_ping);
+            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_ele_out_ping);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_pong, b_ele_out_ping);
             TC_pong += triCount_pong[0];
         } else {
             processList (list_a_pong, list_b_pong, a_ele_out_ping, b_ele_out_ping, triCount_ping);
-            loadCpyListA (a_ele_in, column_list, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
-            loadCpyListB (dist_coal, b_ele_in, column_list, list_b_ping, b_ele_out_pong);
+            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_pong);
+            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_pong);
             TC_ping += triCount_ping[0];
         }
         pp = 1 - pp;
