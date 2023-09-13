@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     double Kernel_exe_time = 0;
 
    // for (int p_idx = 0; p_idx < partition_number; p_idx++) {
-    for (int p_idx = 163; p_idx < partition_number; p_idx++) {
+    for (int p_idx = 162; p_idx < 163; p_idx++) {
 	std::cout << "partition id = " << p_idx << std::endl;
         int edgeNum;
         std::string edgeName = "./dataset_adj_test/" + datasetName + "_edge.txt";
