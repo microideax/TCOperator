@@ -139,7 +139,7 @@ xclbin: build
 
 VPP_LDFLAGS_krnl_tc += --config ./krnl_tc.cfg
 ############################## Setting Rules for Binary Containers (Building Kernels) ##############################
-$(TEMP_DIR)/tc.xo: src/tc_single_core.cpp
+$(TEMP_DIR)/tc.xo: src/tc_single_core_nopp.cpp
 ## $(TEMP_DIR)/tc.xo: src/tc_etaskSplit_offset64.cpp
 	mkdir -p $(TEMP_DIR)
 	$(VPP) $(VPP_FLAGS) -c -k TriangleCount --temp_dir $(TEMP_DIR)  -I'$(<D)' -o'$@' '$<'

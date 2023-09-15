@@ -144,9 +144,9 @@ void loadOffset(int length, int64* offset_list, hls::stream<int512>& eStrmIn, \
             a_para.length[j] = a_length;
             b_para.offset[j] = b_offset;
             b_para.length[j] = b_length;
-        std::cout << "a_value, b_value: " << a_value << ", " << b_value << std::endl;
-        std::cout << "Loaded a_offset, b_offset: " << a_offset << ", " << b_offset << std::endl;
-        std::cout << "Loaded a_length, b_length: " << a_length << ", " << b_length << std::endl;
+        // std::cout << "a_value, b_value: " << a_value << ", " << b_value << std::endl;
+        // std::cout << "Loaded a_offset, b_offset: " << a_offset << ", " << b_offset << std::endl;
+        // std::cout << "Loaded a_length, b_length: " << a_length << ", " << b_length << std::endl;
         }
         StrmA << a_para;
         StrmB << b_para;
@@ -244,7 +244,7 @@ void loadCpyListA ( para_int a_element_in, int512* column_list,
     int len_reg = list_a_cache_tag[1];
     int list_tag = -1;
 
-    std::cout<< "len_reg: " << len_reg << std::endl;
+    // std::cout<< "len_reg: " << len_reg << std::endl;
 
     load_copy_list_a_Parallel: for (int j = 0; j < Parallel; j++) {
         list_tag = list_a_tag[j];
@@ -274,13 +274,19 @@ void loadCpyListA ( para_int a_element_in, int512* column_list,
             int o_begin_a = a_value.offset[j] >> T_offset;
             int o_end_a = (a_value.offset[j] + a_value.length[j] + T - 1) >> T_offset;
 
+            int offset_a = a_value.offset[j] & 0xf;
+            int length_a = a_value.length[j];
+
             load_list_a: for (int ii = o_begin_a; ii < o_end_a; ii++) {
             #pragma HLS pipeline
                 int512 list_a_temp = column_list[ii];
                 for (int jj = 0; jj < T; jj++) {
-                #pragma HLS unroll
-                    list_a[j][jj][ii - o_begin_a] = list_a_temp.data[jj];
-                    list_a_cache[0][jj][ii - o_begin_a] = list_a_temp.data[jj];
+            #pragma HLS unroll
+                    int item_idx = jj + (ii - o_begin_a) * T;
+                    if ((item_idx >= offset_a) && (item_idx < (offset_a + length_a))) {
+                        list_a[j][item_idx - offset_a][0] = list_a_temp.data[jj]; // max a_length = T; only need one line
+                        list_a_cache[0][item_idx - offset_a][0] = list_a_temp.data[jj];
+                    }
                 }
             }
             list_a_cache_tag[0] = a_value.offset[j];
@@ -305,6 +311,40 @@ void loadCpyListA ( para_int a_element_in, int512* column_list,
 // <2> fetch from off-chip memory (HBM);
 // input:  b_request + column_list;
 // output: list_b + b_element_out;
+
+// no coalescing in load list b
+void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, int list_b[Parallel][T][BUF_DEPTH], 
+                   para_int b_element_out[1]) {
+
+    para_int b_value = b_request;
+#pragma HLS DATA_PACK variable=b_value
+#pragma HLS ARRAY_PARTITION variable=b_value.offset complete dim=1
+#pragma HLS ARRAY_PARTITION variable=b_value.length complete dim=1
+
+    load_list_b_Parallel: for (int j = 0; j < Parallel; j++) {
+        int o_begin_b = b_value.offset[j] >> T_offset;
+        int o_end_b = (b_value.offset[j] + b_value.length[j] + T - 1) >> T_offset;
+
+        int offset_b = b_value.offset[j] & 0xf;
+        int length_b = b_value.length[j];
+
+        load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
+        #pragma HLS pipeline
+            int512 list_b_temp = column_list[ii];
+            for (int jj = 0; jj < T; jj++) {
+        #pragma HLS unroll
+                int item_idx = jj + (ii - o_begin_b) * T;
+                if ((item_idx >= offset_b) && (item_idx < (offset_b + length_b))) {
+                    list_b[j][item_idx - offset_b][0] = list_b_temp.data[jj]; // max a_length = T; only need one line
+                }
+            }
+        }
+        b_element_out[0].offset[j] = b_value.offset[j];
+        b_element_out[0].length[j] = b_value.length[j];
+    }
+}
+
+/*
 void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, int list_b[Parallel][T][BUF_DEPTH], 
                    para_int b_element_out[1]) {
 
@@ -387,7 +427,7 @@ void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, int l
         }
     }
 }
-
+*/
 
 int msb (unsigned int v) {
 #pragma HLS inline
@@ -468,22 +508,26 @@ void setIntersectionMerge(int list_a[T][BUF_DEPTH], int list_b[T][BUF_DEPTH], in
                      int list_b_offset, int list_b_len, int* tc_count)
 {
 #pragma HLS inline
-    int o_idx_a = list_a_offset & 0xf;
-    int o_idx_b = list_b_offset & 0xf;
+    // int o_idx_a = list_a_offset & 0xf;
+    // int o_idx_b = list_b_offset & 0xf;
+    int o_idx_a = 0;
+    int o_idx_b = 0;
     int idx_a = o_idx_a;
     int idx_b = o_idx_b;
     int count = 0;  
 loop_set_insection: while ((idx_a < list_a_len + o_idx_a) && (idx_b < list_b_len + o_idx_b))
     {
 #pragma HLS pipeline ii=1
-        int a_dim_1 = idx_a >> T_offset;
-        int a_dim_2 = idx_a & 0xf;
+        // int a_dim_1 = idx_a >> T_offset;
+        // int a_dim_2 = idx_a & 0xf;
 
-        int b_dim_1 = idx_b >> T_offset;
-        int b_dim_2 = idx_b & 0xf;
+        // int b_dim_1 = idx_b >> T_offset;
+        // int b_dim_2 = idx_b & 0xf;
 
-        int value_a = list_a[a_dim_2][a_dim_1];
-        int value_b = list_b[b_dim_2][b_dim_1];
+        // int value_a = list_a[a_dim_2][a_dim_1];
+        // int value_b = list_b[b_dim_2][b_dim_1];
+        int value_a = list_a[idx_a][0];
+        int value_b = list_b[idx_b][0];
 
         if(value_a < value_b)
             idx_a++;
