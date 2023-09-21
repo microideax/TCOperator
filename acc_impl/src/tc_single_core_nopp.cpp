@@ -16,8 +16,11 @@
 #define OFFSET_CACHE_OFFSET 8
 #define OFFSET_CACHE_MASK   0xff
 #define debug           false
-#define Profile         false
+#define Profile         true
 #define L_LEN           32
+#define CACHE_B_LEN     1
+#define CACHE_B_OFFSET  0
+#define CACHE_B_MASK    0x1
 
 typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
@@ -39,6 +42,8 @@ int b_cacheMisses = 0;
 #if Profile==true
     int hit_count_list_a = 0;
     int miss_count_list_a = 0;
+    int hit_count_list_b = 0;
+    int miss_count_list_b = 0;
     int memory_access_a = 0;
     int memory_access_b = 0;
     int data_amount_off_chip_a = 0;
@@ -313,8 +318,10 @@ void loadCpyListA ( para_int a_element_in, int512* column_list,
 // output: list_b + b_element_out;
 
 // no coalescing in load list b
-void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, int list_b[Parallel][T][BUF_DEPTH], 
-                   para_int b_element_out[1]) {
+void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, 
+                    int list_b_cache[CACHE_B_LEN][T][BUF_DEPTH], int list_b_cache_tag[CACHE_B_LEN][2], 
+                    int list_b[Parallel][T][BUF_DEPTH], 
+                    para_int b_element_out[1]) {
 
     para_int b_value = b_request;
 #pragma HLS DATA_PACK variable=b_value
@@ -322,23 +329,47 @@ void loadCpyListB (int dist_coal, para_int b_request, int512* column_list, int l
 #pragma HLS ARRAY_PARTITION variable=b_value.length complete dim=1
 
     load_list_b_Parallel: for (int j = 0; j < Parallel; j++) {
-        int o_begin_b = b_value.offset[j] >> T_offset;
-        int o_end_b = (b_value.offset[j] + b_value.length[j] + T - 1) >> T_offset;
 
-        int offset_b = b_value.offset[j] & 0xf;
-        int length_b = b_value.length[j];
+        int idx = b_value.offset[j] & CACHE_B_MASK; // cache size = 2^5 = 32;
 
-        load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
-        #pragma HLS pipeline
-            int512 list_b_temp = column_list[ii];
-            for (int jj = 0; jj < T; jj++) {
-        #pragma HLS unroll
-                int item_idx = jj + (ii - o_begin_b) * T;
-                if ((item_idx >= offset_b) && (item_idx < (offset_b + length_b))) {
-                    list_b[j][item_idx - offset_b][0] = list_b_temp.data[jj]; // max a_length = T; only need one line
+        if (list_b_cache_tag[idx][0] == b_value.offset[j]) { // hit load from cache
+            for (int k = 0; k < list_b_cache_tag[idx][1]; k++) {
+                list_b[j][k][0] = list_b_cache[idx][k][0]; 
+            }
+#if Profile==true
+            hit_count_list_b++;
+#endif
+
+        } else {
+
+            int o_begin_b = b_value.offset[j] >> T_offset;
+            int o_end_b = (b_value.offset[j] + b_value.length[j] + T - 1) >> T_offset;
+
+            int offset_b = b_value.offset[j] & 0xf;
+            int length_b = b_value.length[j];
+
+            load_list_b: for (int ii = o_begin_b; ii < o_end_b; ii++) {
+            #pragma HLS pipeline
+                int512 list_b_temp = column_list[ii];
+                for (int jj = 0; jj < T; jj++) {
+            #pragma HLS unroll
+                    int item_idx = jj + (ii - o_begin_b) * T;
+                    if ((item_idx >= offset_b) && (item_idx < (offset_b + length_b))) {
+                        list_b[j][item_idx - offset_b][0] = list_b_temp.data[jj]; // max a_length = T; only need one line
+                        list_b_cache[idx][item_idx - offset_b][0] = list_b_temp.data[jj];
+                    }
                 }
             }
+            list_b_cache_tag[idx][0] = b_value.offset[j];
+            list_b_cache_tag[idx][1] = b_value.length[j];
+
+#if Profile==true
+            miss_count_list_b++;
+            memory_access_b += (o_end_b - o_begin_b);
+            data_amount_off_chip_b += ((o_end_b - o_begin_b) * T);
+#endif
         }
+
         b_element_out[0].offset[j] = b_value.offset[j];
         b_element_out[0].length[j] = b_value.length[j];
     }
@@ -685,6 +716,16 @@ void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list_1
 #pragma HLS array_partition variable=list_a_cache type=complete dim=1
 #pragma HLS array_partition variable=list_a_cache type=complete dim=2
 // #pragma HLS BIND_STORAGE variable=list_a_cache type=RAM_S2P impl=BRAM
+    int list_b_cache[CACHE_B_LEN][T][BUF_DEPTH];
+// #pragma HLS array_partition variable=list_b_cache type=complete dim=1
+#pragma HLS array_partition variable=list_b_cache type=complete dim=2
+#pragma HLS BIND_STORAGE variable=list_b_cache type=RAM_S2P impl=BRAM
+    int list_b_cache_tag[CACHE_B_LEN][2];
+#pragma HLS BIND_STORAGE variable=list_b_cache_tag type=RAM_S2P impl=BRAM
+    for (int i = 0; i < CACHE_B_LEN; i++) {
+        list_b_cache_tag[i][0] = -1; // invalid data in cache
+        list_b_cache_tag[i][1] = 0;
+    }
 
     int list_a_cache_tag[2];
     list_a_cache_tag[0] = -1; // invalid data in cache
@@ -743,7 +784,7 @@ void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list_1
         pp = 1 - pp;
 */
         loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_ele_out_ping);
-        loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_ping, b_ele_out_ping);
+        loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_cache, list_b_cache_tag, list_b_ping, b_ele_out_ping);
         processList (list_a_ping, list_b_ping, a_ele_out_ping, b_ele_out_ping, triCount_ping);
         TC_ping += triCount_ping[0];
 
@@ -755,6 +796,8 @@ void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list_1
     std::cout << "Parallel size = " << Parallel << std::endl;
     std::cout << "hit_count_list_a = " << hit_count_list_a << std::endl;
     std::cout << "miss_count_list_a = " << miss_count_list_a << std::endl;
+    std::cout << "hit_count_list_b = " << hit_count_list_b << std::endl;
+    std::cout << "miss_count_list_b = " << miss_count_list_b << std::endl;
     std::cout << "memory_access_a = " << memory_access_a << std::endl;
     std::cout << "memory_access_b = " << memory_access_b << std::endl;
     std::cout << "data_amount_off_chip_a = " << data_amount_off_chip_a << std::endl;

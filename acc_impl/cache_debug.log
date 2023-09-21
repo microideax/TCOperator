@@ -1,0 +1,43 @@
+load graph dataset facebook_combined [list_b_cache size = 4096, list_a_cache size = 1] using partition id = 162;
+Parallel size = 8
+hit_count_list_a = 21192
+miss_count_list_a = 392
+hit_count_list_b = 21186
+miss_count_list_b = 398
+memory_access_a = 465
+memory_access_b = 471
+data_amount_off_chip_a = 7440
+data_amount_off_chip_b = 7536
+
+load graph dataset facebook_combined [list_b_cache size = 512, list_a_cache size = 1] using partition id = 162;
+Parallel size = 8
+hit_count_list_a = 21192
+miss_count_list_a = 392
+hit_count_list_b = 17758
+miss_count_list_b = 3826
+memory_access_a = 465
+memory_access_b = 4927
+data_amount_off_chip_a = 7440
+data_amount_off_chip_b = 78832
+
+load graph dataset facebook_combined [list_b_cache size = 64, list_a_cache size = 1] using partition id = 162;
+Parallel size = 8
+hit_count_list_a = 21192
+miss_count_list_a = 392
+hit_count_list_b = 3558
+miss_count_list_b = 18026
+memory_access_a = 465
+memory_access_b = 21904
+data_amount_off_chip_a = 7440
+data_amount_off_chip_b = 350464
+
+load graph dataset facebook_combined [list_b_cache size = 1, list_a_cache size = 1] using partition id = 162;
+Parallel size = 8
+hit_count_list_a = 21192
+miss_count_list_a = 392
+hit_count_list_b = 6
+miss_count_list_b = 21578
+memory_access_a = 465
+memory_access_b = 26361
+data_amount_off_chip_a = 7440
+data_amount_off_chip_b = 421776
