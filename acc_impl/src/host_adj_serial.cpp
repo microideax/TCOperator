@@ -116,11 +116,14 @@ int main(int argc, char** argv) {
 	std::cout << "partition id = " << p_idx << std::endl;
         int edgeNum;
         std::string edgeName = "./dataset_adj_test/" + datasetName + "_edge.txt";
+        // std::string edgeName = "./dataset_test/edge.txt";
         getTxtSize(edgeName, edgeNum);
 
         int columnNum, offsetNum;
         std::string offsetName = "./dataset_adj_test/" + datasetName + "_row_double_" + std::to_string(p_idx) + ".txt";
         std::string columnName = "./dataset_adj_test/" + datasetName + "_col_" + std::to_string(p_idx) + ".txt";
+        // std::string offsetName = "./dataset_test/row_double.txt";
+        // std::string columnName = "./dataset_test/col.txt";
 
         getTxtSize(offsetName, offsetNum);
         getTxtSize(columnName, columnNum);
@@ -133,7 +136,7 @@ int main(int argc, char** argv) {
         getTxtContent(edgeName, edgeList, edgeNum, true);
 
         xrt::bo columnBuffer = xrt::bo(device, (columnNum * sizeof(int)), tc_krnl.group_id(2));
-        xrt::bo offsetBuffer = xrt::bo(device, (offsetNum * sizeof(int)), tc_krnl.group_id(1));;
+        xrt::bo offsetBuffer = xrt::bo(device, (offsetNum * sizeof(int)), tc_krnl.group_id(1));
         int* columnList = columnBuffer.map<int*>();
         int* offsetList = offsetBuffer.map<int*>();
         getTxtContent(columnName, columnList, columnNum, false);
