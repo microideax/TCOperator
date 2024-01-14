@@ -120,8 +120,8 @@ int main(int argc, char** argv) {
         getTxtSize(edgeName, edgeNum);
 
         int columnNum, offsetNum;
-        std::string offsetName = "./dataset_adj_test/" + datasetName + "_row_double_" + std::to_string(p_idx) + ".txt";
-        std::string columnName = "./dataset_adj_test/" + datasetName + "_col_" + std::to_string(p_idx) + ".txt";
+        std::string offsetName = "./dataset_adj_test/" + datasetName + "_row_align_" + std::to_string(p_idx) + ".txt";
+        std::string columnName = "./dataset_adj_test/" + datasetName + "_col_align_" + std::to_string(p_idx) + ".txt";
         // std::string offsetName = "./dataset_test/row_double.txt";
         // std::string columnName = "./dataset_test/col.txt";
 
