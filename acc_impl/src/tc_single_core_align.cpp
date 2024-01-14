@@ -107,11 +107,11 @@ void loadOffset(int length, int64* offset_list, hls::stream<int512>& eStrmIn, \
                 cache_tag_ap = tagCache[cacheline_index].range((inner_index + 1) * 32 - 1, inner_index * 32);
                 cache_tag = cache_tag_ap.to_int();
                 if (cache_tag == item_value) { // hit 
-                    std::cout << "hit" << std::endl;
+                    // std::cout << "hit" << std::endl;
                     item_offset = offsetCache[idx];
                     item_length = lengthCache[idx];
                 } else {
-                    std::cout << "miss" << std::endl;
+                    // std::cout << "miss" << std::endl;
                     int64 temp_value = offset_list[item_value];
                     item_offset = temp_value.data[0];
                     item_length = temp_value.data[1] - temp_value.data[0];
@@ -226,8 +226,8 @@ void loadCpyListA ( para_int a_element_in, int512* column_list,
 
     #if Profile==true
             miss_count_list_a++;
-            memory_access_a += (o_end_a - o_begin_a);
-            data_amount_off_chip_a += ((o_end_a - o_begin_a) * T);
+            memory_access_a += 1;
+            data_amount_off_chip_a += T;
     #endif
 
         }
@@ -296,8 +296,8 @@ void loadCpyListB (int dist_coal, para_int b_request, int512* column_list,
 
 #if Profile==true
             miss_count_list_b++;
-            memory_access_b += (o_end_b - o_begin_b);
-            data_amount_off_chip_b += ((o_end_b - o_begin_b) * T);
+            memory_access_b += 1;
+            data_amount_off_chip_b += T;
 #endif
         }
     }
