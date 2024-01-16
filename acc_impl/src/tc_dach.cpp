@@ -30,10 +30,11 @@ void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     }
 }
 
-void loadOffset(int length, int64& offset_list, hls::stream<int512>& eStrmIn, \
+void loadOffset(int length, cache_64& offset_list, hls::stream<int512>& eStrmIn, \
                 hls::stream<bool>& ctrlStrm, hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
 
     int loop = (length + T - 1) / T;
+    int count = 0; // for edge filter
 
     para_int a_para;
     para_int b_para;
