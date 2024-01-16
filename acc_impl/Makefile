@@ -113,6 +113,7 @@ ifneq ($(TARGET), hw)
 endif
 
 VPP_FLAGS += --kernel_frequency $(FREQ)
+VPP_FLAGS += -I ./src/dach/
 
 EXECUTABLE = ./tc_host
 EMCONFIG_DIR = $(TEMP_DIR)
