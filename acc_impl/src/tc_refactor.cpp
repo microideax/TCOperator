@@ -4,6 +4,7 @@
 #include <hls_math.h>
 #include <iostream>
 #include <algorithm>
+#include "cache.h"
 
 #define BUF_DEPTH       512
 #define T               16
@@ -17,6 +18,9 @@
 #define debug           false
 #define Profile         false
 
+static const int N = 16;
+
+
 typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512; // for off-chip memory data access.
 typedef struct data_custom_type {
@@ -28,6 +32,8 @@ typedef struct data_cache_type {
     int offset;
     int len;
 } cache_line_t; // for offset cache design.
+
+typedef cache<int64, true, true, 1, N, 2, 1, 8, true, 0, 0, false, 2> cache_t;
 
 int a_cacheHits = 0;
 int a_cacheMisses = 0;  
@@ -56,7 +62,7 @@ int getTag (int value) { return value >> OFFSET_CACHE_OFFSET;}
 
 int getIndex (int value) { return value & OFFSET_CACHE_MASK;}
 
-void cacheLoad(cache_line_t* cache, int64 *offset_port_1,                                                                     
+void cacheLoad(cache_line_t* cache, int64* offset_port_1,                                                                     
                  int nodeIndex, int& offset, int& len,                                                                       
                  int& hitCounter, int& missCounter) {                                                 
 #pragma HLS inline                                                                                                          
@@ -84,7 +90,7 @@ void cacheLoad(cache_line_t* cache, int64 *offset_port_1,
     }                                                                                                                       
 }
 
-void loadOffset(int length, int64* offset_list_1, int64* offset_list_2,
+void loadOffset(int length, int64 &offset_list_1, int64 &offset_list_2,
                 hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
                 hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
     int loop = (length + T - 1) / T;
@@ -529,7 +535,19 @@ void processList(int list_a[Parallel][T][BUF_DEPTH], int list_b[Parallel][T][BUF
 }
 
 
+void load_offset_top(int length, int64* offset_list_1, int64* offset_list_2,
+                hls::stream<int512>& eStrmIn, hls::stream<bool>& ctrlStrm,
+                hls::stream<para_int>& StrmA, hls::stream<para_int>& StrmB) {
+
+
+    cache_t o_port_1(offset_list_1);
+    cache_t o_port_2(offset_list_2);
+    cache_wrapper(loadOffset, length, o_port_1, o_port_2, eStrmIn, ctrlStrm, StrmA, StrmB);
+
+}
+
 extern "C" {
+
 void TriangleCount (int512* edge_list, int64* offset_list_1, int64* offset_list_2, \
                     int512* column_list_1, int512* column_list_2, int edge_num, int dist_coal, int* tc_number ) {
 
@@ -600,8 +618,8 @@ void TriangleCount (int512* edge_list, int64* offset_list_1, int64* offset_list_
     int triCount_pong[1]={0};
     int length = edge_num*2;
 
-    loadEdgeList (length, edge_list, edgeStrm);
-    loadOffset (length, offset_list_1, offset_list_2, edgeStrm, 
+    loadEdgeList(length, edge_list, edgeStrm);
+    load_offset_top(length, offset_list_1, offset_list_2, edgeStrm, 
                 ctrlStrm, offLenStrmA, offLenStrmB);
 
     int pp = 0; // ping-pong operation

@@ -553,18 +553,18 @@ void TriangleCount (int512* edge_list, int64* offset_list, int512* column_list_1
         para_int a_ele_in = offLenStrmA.read();
         para_int b_ele_in = offLenStrmB.read();
 
-        if (pp) {
-            processList (list_a_ping, list_b_ping, a_length_pong, b_length_pong, triCount_pong);
-            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_length_ping);
-            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_cache, list_b_cache_tag, list_b_pong, b_length_ping);
-            TC_pong += triCount_pong[0];
-        } else {
-            processList (list_a_pong, list_b_pong, a_length_ping, b_length_ping, triCount_ping);
-            loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_length_pong);
-            loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_cache, list_b_cache_tag, list_b_ping, b_length_pong);
-            TC_ping += triCount_ping[0];
-        }
-        pp = 1 - pp;
+        // if (pp) {
+        //     processList (list_a_ping, list_b_ping, a_length_pong, b_length_pong, triCount_pong);
+        //     loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_pong, list_a_pong_tag, a_length_ping);
+        //     loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_cache, list_b_cache_tag, list_b_pong, b_length_ping);
+        //     TC_pong += triCount_pong[0];
+        // } else {
+        //     processList (list_a_pong, list_b_pong, a_length_ping, b_length_ping, triCount_ping);
+        //     loadCpyListA (a_ele_in, column_list_1, list_a_cache, list_a_cache_tag, list_a_ping, list_a_ping_tag, a_length_pong);
+        //     loadCpyListB (dist_coal, b_ele_in, column_list_2, list_b_cache, list_b_cache_tag, list_b_ping, b_length_pong);
+        //     TC_ping += triCount_ping[0];
+        // }
+        // pp = 1 - pp;
 
         if (strm_control == false) {
             break;
