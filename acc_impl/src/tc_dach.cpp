@@ -18,9 +18,9 @@ typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512;
 typedef struct data_custom_type {int offset[Parallel]; int length[Parallel];} para_int;
 
-static const int N = 64;
+static const int N = 512;
 typedef cache<int512, true, true, 1, N, 2, 1, 8, true, 0, 0, false, 2> cache_512;
-typedef cache<int64, true, true, 1, N, 2, 1, 8, true, 0, 0, false, 2> cache_64;
+typedef cache<int64, true, false, 2, N, 64, 8, 1, false, 64, 8, false, 3, BRAM, BRAM> cache_64;
 
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
     int loop = (length + T - 1) / T;
@@ -46,7 +46,7 @@ void loadOffset(int length, cache_64& offset_list, hls::stream<int512>& eStrmIn,
 #pragma HLS ARRAY_PARTITION variable=b_para.length complete dim=1
 
     int512 edge_value;
-    int item_value, item_offset, item_length;
+    int a_value, b_value;
     int a_offset, a_length;
     int b_offset, b_length;
 
@@ -54,30 +54,24 @@ void loadOffset(int length, cache_64& offset_list, hls::stream<int512>& eStrmIn,
         edge_value = eStrmIn.read();
 #pragma HLS array_partition variable=edge_value type=complete dim=1
 
-        for (int j = 0; j < E_per_burst * 2; j++) {
-#pragma HLS pipeline II=1 // this pipeline has an II=3 and depth=28 because of the cacheLoad function, TO be optimized
-            if ((i*T + j) < length) {
-                // load a or b; j%2 == 0 : a; else b;
-                item_value = edge_value.data[j];
-                int64 temp_value = offset_list[item_value];
-                item_offset = temp_value.data[0];
-                item_length = temp_value.data[1] - temp_value.data[0];
+        Load_offset: for (int j = 0; j < E_per_burst; j++) { // we use two ports to set II = 1
+#pragma HLS pipeline II=1
+            if ((i*T + j*2) < length) {
+                a_value = edge_value.data[j*2];
+                int64 temp_a = offset_list[a_value];
+                a_offset = temp_a.data[0];
+                a_length = temp_a.data[1] - temp_a.data[0];
 
-                if (j % 2 == 0) {
-                    a_offset = item_offset;
-                    a_length = item_length;
-                } else {
-                    b_offset = item_offset;
-                    b_length = item_length;
-                }
+                b_value = edge_value.data[j*2 + 1];
+                int64 temp_b = offset_list[b_value];
+                b_offset = temp_b.data[0];
+                b_length = temp_b.data[1] - temp_b.data[0];
 
-                if ((j % 2 == 1) && (a_length > 0) && (b_length > 0)) {
-
+                if ((a_length > 0) && (b_length > 0)) {
                     a_para.offset[count] = a_offset;
                     a_para.length[count] = a_length;
                     b_para.offset[count] = b_offset;
                     b_para.length[count] = b_length;
-
                     count ++;
                     if (count == Parallel) {
                         count = 0;
