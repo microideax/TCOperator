@@ -23,9 +23,9 @@ typedef struct data_64bit_type {int data[2];} int64;
 typedef struct data_512bit_type {int data[16];} int512;
 typedef struct data_custom_type {int offset[Parallel]; int length[Parallel];} para_int;
 
-static const int N = 512;
+static const int N = 256;
 typedef cache<int512, true, false, 1, N, 8, 8, 1, false, 8, 8, false, 3> cache_512;
-typedef cache<int64, true, false, 2, N, 64, 8, 1, false, 64, 8, false, 3, BRAM, BRAM> cache_64;
+typedef cache<int64, true, false, 2, N, 8, 8, 4, false, 8, 4, false, 3, BRAM, BRAM> cache_64;
 // typedef cache<int64, true, true, 1, N, 2, 1, 8, true, 0, 0, false, 2> cache_64;
 
 void loadEdgeList(int length, int512* inArr, hls::stream<int512>& eStrmOut) {
