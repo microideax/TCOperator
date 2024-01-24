@@ -109,8 +109,8 @@ int main(int argc, char** argv) {
     int TcNum = 0;
     double Kernel_exe_time = 0;
 
-    for (int p_idx = 0; p_idx < partition_number; p_idx++) {
-    // for (int p_idx = 162; p_idx < 163; p_idx++) {
+    // for (int p_idx = 0; p_idx < partition_number; p_idx++) {
+    for (int p_idx = 162; p_idx < 163; p_idx++) {
 	std::cout << "partition id = " << p_idx << std::endl;
         int edgeNum;
         std::string edgeName = "./dataset_adj_test/" + datasetName + "_edge.txt";
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
         int* result = resultBuffer.map<int*>();
         result[0] = 0;
 
-        // std::cout << "synchronize input buffer data to device global memory\n";
+        std::cout << "synchronize input buffer data to device global memory\n";
         auto start_pcie = std::chrono::steady_clock::now();
         columnBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         offsetBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
@@ -152,12 +152,12 @@ int main(int argc, char** argv) {
         resultBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         auto end_pcie = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_data_transfer = end_pcie-start_pcie;
-        // std::cout << "Partition id = " << p_idx << " PCIe time = " << elapsed_data_transfer.count() << std::endl;
+        std::cout << "Partition id = " << p_idx << " PCIe time = " << elapsed_data_transfer.count() << std::endl;
 
         // std::cout << "Execution of the kernel\n";
 
         auto start = std::chrono::steady_clock::now();
-        xrt::run krnl_run = tc_krnl(edgeBuffer, offsetBuffer, columnBuffer, columnBuffer, edgeNum, resultBuffer);
+        xrt::run krnl_run = tc_krnl(edgeBuffer, offsetBuffer, columnBuffer, edgeNum, resultBuffer);
         krnl_run.wait();
         auto end = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = end-start;
