@@ -34,7 +34,7 @@ void loadEdgeList(int length, ap_uint<512>* inArr, hls::stream<ap_uint<512>>& eS
 }
 
 void loadOffset(int length, cache_64& offset_list, hls::stream<ap_uint<512>>& eStrmIn, \
-                hls::stream<ap_uint<512>>& StrmOff, hls::stream<ap_uint<512>>& StrmLen) {
+                hls::stream<ap_uint<512>>& offStrm, hls::stream<ap_uint<512>>& lenStrm) {
 
     int loop = (length + T - 1) / T;
 
@@ -45,7 +45,7 @@ void loadOffset(int length, cache_64& offset_list, hls::stream<ap_uint<512>>& eS
     Load_offset: for (int i = 0; i < loop; i++) {
 #pragma HLS pipeline II=1
         edge_value = eStrmIn.read();
-        for (int j = 0; j < E_per_burst*2; j++) { // we use 16 ports to set II = 1
+        for (int j = 0; j < T; j++) { // we use 16 ports to set II = 1
 #pragma HLS unroll
             int vertex = edge_value.range(32*(j+1) - 1, 32*j);
             ap_uint<64> offv = offset_list[vertex];
@@ -54,35 +54,168 @@ void loadOffset(int length, cache_64& offset_list, hls::stream<ap_uint<512>>& eS
             offset_value.range(32*(j+1) - 1, 32*j) = temp_o;
             length_value.range(32*(j+1) - 1, 32*j) = temp_l;
         }
-        StrmOff << offset_value;
-        StrmLen << length_value;
+        offStrm << offset_value;
+        lenStrm << length_value;
     }
 }
 
-void processList(int length, cache_512& column_list, 
-                hls::stream<ap_uint<512>>& StrmOff,
-                hls::stream<ap_uint<512>>& StrmLen, 
-                int* tc_count) {
-
+void filterFunc(int length, int j, \
+                hls::stream<ap_uint<512>> offset_in, \
+                hls::stream<ap_uint<512>> length_in, \
+                hls::stream<ap_uint<512>> offset_out, \
+                hls::stream<ap_uint<512>> length_out) {
     int loop = (length + T - 1) / T;
-    int tc_num = 0;
-
-    ap_uint<512> offset_value;
-    ap_uint<512> length_value;
-    ap_uint<512> temp[T];
-
-    Process_list: for (int i = 0; i < loop; i++) {
+    filter_func: for (int i = 0; i < loop; i++) {
 #pragma HLS pipeline II=1
-        offset_value = StrmOff.read();
-        length_value = StrmLen.read();
-        for (int j = 0; j < T; j++) {
-#pragma HLS unroll
-            int temp_offset = offset_value.range(32*(j+1) - 1, 32*j);
-            temp[j] = column_list[temp_offset]; // load adj list from global memory;
-
-            // test function for intersection
-            tc_num += temp[j].range(31, 0) & 0x1;
+        ap_uint<512> offset_temp = offset_in.read();
+        ap_uint<512> length_temp = length_in.read();
+        ap_uint<512> offset_o;
+        ap_uint<512> length_o;
+        int len = (length_temp.range(32*(j+1)-1, 32*j) == 0)? 1: 0; // if len == 0 , left shift.
+        for (int index = 0; index < T; index++) {
+    #pragma HLS unroll
+            if ((index >= j) && ((index + len) < T)) {
+                offset_o.range(32*(index+1)-1, 32*(index)) = offset_temp.range(32*(index+1+len)-1, 32*(index+len));
+                length_o.range(32*(index+1)-1, 32*(index)) = length_temp.range(32*(index+1+len)-1, 32*(index+len);
+            } else if ((index < j) && ((index + len) < T)) {
+                offset_o.range(32*(index+1)-1, 32*(index)) = offset_temp.range(32*(index+1)-1, 32*index);
+                length_o.range(32*(index+1)-1, 32*(index)) = length_temp.range(32*(index+1)-1, 32*index);
+            } else {
+                offset_o.range(32*(index+1)-1, 32*(index)) = 0;
+                length_o.range(32*(index+1)-1, 32*(index)) = 0;
+            }
         }
+        offset_out << offset_o;
+        length_out << length_o;
+    }
+}
+
+void filterFuncLast(int length, \
+                    hls::stream<ap_uint<512>> offset_in, \
+                    hls::stream<ap_uint<512>> length_in, \
+                    hls::stream<ap_uint<512>> offset_out, \
+                    hls::stream<ap_uint<512>> length_out, \
+                    hls::stream<bool> ctrl) {
+    int loop = (length + T - 1) / T;
+    filter_func_last: for (int i = 0; i < loop; i++) {
+#pragma HLS pipeline II=1
+        ap_uint<512> offset_temp = offset_in.read();
+        ap_uint<512> length_temp = length_in.read();
+        offset_out << offset_temp;
+        length_out << length_temp;
+        ctrl << true;
+    }
+    ctrl << false;
+}
+
+void filterStep1(int length, \
+                hls::stream<ap_uint<512>>& offStrm, \
+                hls::stream<ap_uint<512>>& lenStrm, \
+                hls::stream<bool>& ctrlStrmTemp, \
+                hls::stream<ap_uint<512>>& offStrmTemp, \
+                hls::stream<ap_uint<512>>& lenStrmTemp) {
+
+    hls::stream<ap_uint<512>> offset_temp[T-1];
+    hls::stream<ap_uint<512>> length_temp[T-1];
+
+    filterFunc(length, 0, offStrm, lenStrm, offset_temp[0], length_temp[0]);
+    filter_function: for (int j = 1; j < T-1; j++) {
+#pragma HLS unroll
+        filterFunc(length, j, offset_temp[j-1], length_temp[j-1], \
+                    offset_temp[j], length_temp[j]);
+    }
+    filterFuncLast(length, offset_temp[T-2], length_temp[T-2], \
+                offStrmTemp, lenStrmTemp, ctrlStrmTemp);
+}
+
+void filterStep2(hls::stream<bool>& ctrlStrmTemp, \
+                hls::stream<ap_uint<512>>& offStrmTemp, \
+                hls::stream<ap_uint<512>>& lenStrmTemp
+                hls::stream<bool>& ctrlStrm, \
+                hls::stream<ap_uint<512>>& offStrm, \
+                hls::stream<ap_uint<512>>& lenStrm) {
+    
+    int ring_length[64]; // 64 int size
+    int ring_offset[64]; // 64 int size
+    int read_addr = 0;
+    int write_addr = 0;
+    ap_uint<512> off_rd;
+    ap_uint<512> len_rd;
+
+    filter_step_2: while (1) {
+#pragma HLS pipeline II=1
+        bool ctrl = ctrlStrmTemp.read();
+        if (ctrl == false) break;
+
+        ap_uint<512> off_temp = offStrmTemp.read();
+        ap_uint<512> len_temp = lenStrmTemp.read();
+
+        for (int i = 0; i < T; i++) {
+    #pragma HLS unroll
+            bool write = (len_temp.range(32*(i+1)-1, 32*i) == 0)? false: true; 
+            if (write) {
+                ring_length[(write_addr + i)%(64)] = len_temp.range(32*(i+1)-1, 32*i);
+                ring_offset[(write_addr + i)%(64)] = off_temp.range(32*(i+1)-1, 32*i);
+                write_addr += 1;
+            } else {
+                ring_length[(write_addr + i)%(64)] = 0;
+                ring_offset[(write_addr + i)%(64)] = 0;
+            }
+        }
+
+        write_addr = write_addr % 64;
+        if (((write_addr < read_addr) && (write_addr + 64 - read_addr > 16)) || (write_addr > (read_addr + 16))) {
+        // read ring buffer
+            for (int i = 0; i < T; i++) {
+        #pragma HLS unroll
+                off_rd.range(32*(i+1)-1, 32*i) = ring_offset[(read_addr + i)%(64)];
+                len_rd.range(32*(i+1)-1, 32*i) = ring_length[(read_addr + i)%(64)];
+                read_addr += 1;
+            }
+            read_addr = read_addr % 64;
+            offStrm << off_rd;
+            lenStrm << len_rd;
+            ctrlStrm << false;
+        }
+    }
+
+    // for remaining item
+    for (int i = 0; i < T; i++) {
+#pragma HLS unroll
+        off_rd.range(32*(i+1)-1, 32*i) = ring_offset[(read_addr + i)%(64)];
+        len_rd.range(32*(i+1)-1, 32*i) = ring_length[(read_addr + i)%(64)];
+        read_addr += 1;
+    }
+    ctrlStrm << true;
+}
+
+
+
+void loadAdjList(cache_512& column_cache, hls::stream<bool>& ctrlStrm, \
+                 hls::stream<ap_uint<512>>& offsetStrmOut, \
+                 hls::stream<ap_uint<512>>& lengthStrmOut, int* tc_number) {
+    int tc_num = 0;
+    load_adj_list: while(1) {
+#pragma HLS pipeline II=1
+        bool end = ctrlStrm.read(); // last signal
+        ap_uint<512> offset_out = offsetStrmOut.read();
+        ap_uint<512> length_out = lengthStrmOut.read();
+
+        for (int i = 0; i < T; i++) {
+    #pragma HLS unroll
+            int value_offset = offset_out.range(32*(i+1) - 1, 32*i);
+            ap_uint<512> value_temp = column_cache[value_offset];
+
+            // just for test
+            tc_num += value_temp.range(31, 0);
+        }
+
+        if (end == true) {
+            break;
+        }
+    }
+    tc_number[0] = tc_num;
+}
 
 //         intersection: for (int j = 0; j < E_per_burst; j++) {
 // #pragma HLS unroll
@@ -97,9 +230,26 @@ void processList(int length, cache_512& column_list,
 //             }
 //         }
 
-    }
-    tc_count[0] = tc_num;
-    std::cout << tc_num << std::endl;
+
+void triangleCount(int length, ap_uint<512>*  edge_list, cache_64& offset_cache, cache_512& column_cache, int* tc_number) {
+
+    static hls::stream<ap_uint<512>> eStrmOut;
+    static hls::stream<ap_uint<512>> offsetStrm;
+    static hls::stream<ap_uint<512>> lengthStrm;
+    static hls::stream<ap_uint<512>> offsetStrmTemp;
+    static hls::stream<ap_uint<512>> lengthStrmTemp;
+    static hls::stream<bool>         ctrlStrmTemp;
+    static hls::stream<ap_uint<512>> offsetStrmOut;
+    static hls::stream<ap_uint<512>> lengthStrmOut;
+    static hls::stream<bool>         ctrlStrm;    
+
+    // load edge
+    loadEdgeList(length, edge_list, eStrmOut);
+    loadOffset(length, offset_cache, eStrmOut, offsetStrm, lengthStrm);
+    filterStep1(length, offsetStrm, lengthStrm, ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp);
+    filterStep2(ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp, ctrlStrm, offsetStrmOut, lengthStrmOut);
+    loadAdjList(column_cache, ctrlStrm, offsetStrmOut, lengthStrmOut, tc_number);
+    // processList(); need to add intersection in the future.
 }
 
 
@@ -120,15 +270,9 @@ void TriangleCount (ap_uint<512>* edge_list, ap_uint<64>* offset_list, ap_uint<5
 
 #pragma HLS dataflow
 
-    static hls::stream<ap_uint<512>> edgeStrm;
-    static hls::stream<ap_uint<512>> offsetStrm;
-    static hls::stream<ap_uint<512>> lengthStrm;
-
     int length = edge_num*2;
     cache_64 offset_cache(offset_list);
     cache_512 column_cache(column_list);
-    loadEdgeList (length, edge_list, edgeStrm);
-    cache_wrapper(loadOffset, length, offset_cache, edgeStrm, offsetStrm, lengthStrm);
-    cache_wrapper(processList, length, column_cache, offsetStrm, lengthStrm, tc_number);
+    cache_wrapper(triangleCount, length, edge_list, offset_cache, column_cache, tc_number);
 }
 }
