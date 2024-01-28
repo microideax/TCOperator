@@ -59,6 +59,8 @@ void loadOffset(int length, cache_64& offset_list, hls::stream<ap_uint<512>>& eS
     }
 }
 
+
+/*
 void filterFunc(int length, int j, \
                 hls::stream<ap_uint<512>> offset_in, \
                 hls::stream<ap_uint<512>> length_in, \
@@ -76,7 +78,7 @@ void filterFunc(int length, int j, \
     #pragma HLS unroll
             if ((index >= j) && ((index + len) < T)) {
                 offset_o.range(32*(index+1)-1, 32*(index)) = offset_temp.range(32*(index+1+len)-1, 32*(index+len));
-                length_o.range(32*(index+1)-1, 32*(index)) = length_temp.range(32*(index+1+len)-1, 32*(index+len);
+                length_o.range(32*(index+1)-1, 32*(index)) = length_temp.range(32*(index+1+len)-1, 32*(index+len));
             } else if ((index < j) && ((index + len) < T)) {
                 offset_o.range(32*(index+1)-1, 32*(index)) = offset_temp.range(32*(index+1)-1, 32*index);
                 length_o.range(32*(index+1)-1, 32*(index)) = length_temp.range(32*(index+1)-1, 32*index);
@@ -115,16 +117,16 @@ void filterStep1(int length, \
                 hls::stream<ap_uint<512>>& offStrmTemp, \
                 hls::stream<ap_uint<512>>& lenStrmTemp) {
 
-    hls::stream<ap_uint<512>> offset_temp[T-1];
-    hls::stream<ap_uint<512>> length_temp[T-1];
+    hls::stream<ap_uint<512>> offset_temp[E_per_burst];
+    hls::stream<ap_uint<512>> length_temp[E_per_burst];
 
     filterFunc(length, 0, offStrm, lenStrm, offset_temp[0], length_temp[0]);
-    filter_function: for (int j = 1; j < T-1; j++) {
+    filter_function: for (int j = 1; j < E_per_burst - 1; j++) {
 #pragma HLS unroll
         filterFunc(length, j, offset_temp[j-1], length_temp[j-1], \
                     offset_temp[j], length_temp[j]);
     }
-    filterFuncLast(length, offset_temp[T-2], length_temp[T-2], \
+    filterFuncLast(length, offset_temp[E_per_burst-2], length_temp[E_per_burst-2], \
                 offStrmTemp, lenStrmTemp, ctrlStrmTemp);
 }
 
@@ -188,30 +190,36 @@ void filterStep2(hls::stream<bool>& ctrlStrmTemp, \
     }
     ctrlStrm << true;
 }
+*/
 
-
-
-void loadAdjList(cache_512& column_cache, hls::stream<bool>& ctrlStrm, \
-                 hls::stream<ap_uint<512>>& offsetStrmOut, \
-                 hls::stream<ap_uint<512>>& lengthStrmOut, int* tc_number) {
+void loadAdjList(int length, cache_512& column_cache, \
+                 hls::stream<ap_uint<512>>& offsetStrm, \
+                 hls::stream<ap_uint<512>>& lengthStrm, int* tc_number) {
     int tc_num = 0;
-    load_adj_list: while(1) {
+    int loop = (length + T - 1) / T;
+
+    load_adj_list: for (int i = 0; i < loop; i++) {
 #pragma HLS pipeline II=1
-        bool end = ctrlStrm.read(); // last signal
-        ap_uint<512> offset_out = offsetStrmOut.read();
-        ap_uint<512> length_out = lengthStrmOut.read();
+        ap_uint<512> offset_out = offsetStrm.read();
+        ap_uint<512> length_out = lengthStrm.read();
 
         for (int i = 0; i < T; i++) {
     #pragma HLS unroll
             int value_offset = offset_out.range(32*(i+1) - 1, 32*i);
-            ap_uint<512> value_temp = column_cache[value_offset];
+            int edge_idx = i >> 1;
+            int src_length = length_out.range(32*(edge_idx*2+1) - 1, 32*edge_idx*2);
+            int dst_length = length_out.range(32*(edge_idx*2+2) - 1, 32*(edge_idx*2+1));
+
+            ap_uint<512> value_temp;
+            if ((src_length == 0) || (src_length == 0)) {
+                value_temp = 0;
+                // std::cout << "len = 0" <<std::endl;
+            } else {
+                value_temp = column_cache[value_offset];
+            }
 
             // just for test
             tc_num += value_temp.range(31, 0);
-        }
-
-        if (end == true) {
-            break;
         }
     }
     tc_number[0] = tc_num;
@@ -236,19 +244,19 @@ void triangleCount(int length, ap_uint<512>*  edge_list, cache_64& offset_cache,
     static hls::stream<ap_uint<512>> eStrmOut;
     static hls::stream<ap_uint<512>> offsetStrm;
     static hls::stream<ap_uint<512>> lengthStrm;
-    static hls::stream<ap_uint<512>> offsetStrmTemp;
-    static hls::stream<ap_uint<512>> lengthStrmTemp;
-    static hls::stream<bool>         ctrlStrmTemp;
-    static hls::stream<ap_uint<512>> offsetStrmOut;
-    static hls::stream<ap_uint<512>> lengthStrmOut;
-    static hls::stream<bool>         ctrlStrm;    
+    // static hls::stream<ap_uint<512>> offsetStrmTemp;
+    // static hls::stream<ap_uint<512>> lengthStrmTemp;
+    // static hls::stream<bool>         ctrlStrmTemp;
+    // static hls::stream<ap_uint<512>> offsetStrmOut;
+    // static hls::stream<ap_uint<512>> lengthStrmOut;
+    // static hls::stream<bool>         ctrlStrm;    
 
     // load edge
     loadEdgeList(length, edge_list, eStrmOut);
     loadOffset(length, offset_cache, eStrmOut, offsetStrm, lengthStrm);
-    filterStep1(length, offsetStrm, lengthStrm, ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp);
-    filterStep2(ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp, ctrlStrm, offsetStrmOut, lengthStrmOut);
-    loadAdjList(column_cache, ctrlStrm, offsetStrmOut, lengthStrmOut, tc_number);
+    // filterStep1(length, offsetStrm, lengthStrm, ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp);
+    // filterStep2(ctrlStrmTemp, offsetStrmTemp, lengthStrmTemp, ctrlStrm, offsetStrmOut, lengthStrmOut);
+    loadAdjList(length, column_cache, offsetStrm, lengthStrm, tc_number);
     // processList(); need to add intersection in the future.
 }
 
